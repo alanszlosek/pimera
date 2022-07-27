@@ -8,7 +8,6 @@ This is not entirely a new project. I created a similar project in Python 3 many
 
 I'm still getting comfortable with libcamera, but am hoping things will go faster once I can begin porting my Python code to C.
 
-
 # Features
 
 * Motion detection
@@ -25,5 +24,14 @@ I'm still getting comfortable with libcamera, but am hoping things will go faste
 * Raspberry Pi 3B+ or 4B (haven't tested)
 * Raspberry Pi OS, based on Debian 11 or later
 * apt install clang libcamera-dev libjpeg62-turbo-dev
+
+## Building
+
 * In `src/`, run `make`
 * Code has hardcoded defaults. Haven't implemented loading settings from file yet.
+
+# Using libcamera 
+
+If you're new to libcamera like I am, check out the `examples/libcamera-scaffold` directory. There you will find `scaffold.cpp` and a `Makefile` for building (possibly) the simplest possible libcamera app.
+
+It configures the camera, registers a callback, receives frames via the callback function, then exits after 10 seconds.
