@@ -173,7 +173,7 @@ static void* processingThread(void* arg) {
 
                 auto start_time = std::chrono::high_resolution_clock::now();
                 // use a fresh jpeg_buffer each iteration to avoid OOM:
-        // https://github.com/libjpeg-turbo/libjpeg-turbo/issues/610
+                // https://github.com/libjpeg-turbo/libjpeg-turbo/issues/610
                 jpeg_mem_dest(&cinfo, &jpeg_buffer, &jpeg_len);	
                 // this takes 80-130ms, longer than frame at 10fps
                 jpeg_start_compress(&cinfo, TRUE);
