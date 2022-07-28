@@ -53,13 +53,11 @@ int main()
     std::unique_ptr<CameraConfiguration> config = camera->generateConfiguration( { StreamRole::VideoRecording } );
     StreamConfiguration &streamConfig = config->at(0);
     streamConfig.pixelFormat = libcamera::formats::BGR888;
-    streamConfig.size.width = 1640; //640;
-    streamConfig.size.height = 922; //480;
-    // This seems to default to 4, but we want to queue buffers for post
-    // processing, so we need to raise it.
-    // 10 works ... oddly, but 20 fails behind the scenes. doesn't apear
-    // to be an error we can catch
-    streamConfig.bufferCount = 20;
+    streamConfig.size.width = 1920; //1640;
+    streamConfig.size.height = 1080; //922;
+    // This seems to default to 4, can't raise this very high
+    // You'll need your own allocator to if you need lots of buffers
+    streamConfig.bufferCount = 10;
 
     // TODO: check return value of this
     CameraConfiguration::Status status = config->validate();
@@ -74,8 +72,6 @@ int main()
     FrameBufferAllocator *allocator = new FrameBufferAllocator(camera);
 
     for (StreamConfiguration &cfg : *config) {
-        // TODO: it's possible we'll need our own allocator for raspi,
-        // so we can enqueue many frames for processing
         int ret = allocator->allocate(cfg.stream());
         // This error handling doesn't catch a failure to allocate 20 buffers
         if (ret < 0) {
@@ -115,8 +111,6 @@ int main()
     camera->requestCompleted.connect(requestComplete);
 
     // sets fps (via frame duration limts)
-    // TODO: create ControlList and move to global var
-    // TODO: is there a raspi-specific implementation of this?
     libcamera::ControlList controls(libcamera::controls::controls);
     int framerate = 30;
     int64_t frame_time = 1000000 / framerate; // in microseconds
@@ -134,8 +128,12 @@ int main()
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
 
-    // TODO: add graceful stop and shutdown code here
-
+    camera->stop();
+    allocator->free(stream);
+    delete allocator;
+    camera->release();
+    camera.reset();
+    cm->stop();
 
     return 0;
 }
