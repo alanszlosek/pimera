@@ -50,6 +50,7 @@ typedef struct PiMeraSettings {
     unsigned int height;
     unsigned int stride;
     unsigned int fps;
+    unsigned int mjpeg_quality = 90;
 } PiMeraSettings;
 
 PiMeraSettings settings;
@@ -72,32 +73,32 @@ static void* processingThread(void* arg) {
     size_t U_size;
     size_t V_size;
     uint8_t *Y_max;
-	uint8_t *U_max;
-	uint8_t *V_max;
+    uint8_t *U_max;
+    uint8_t *V_max;
     uint8_t* jpeg_buffer = NULL;
     jpeg_mem_len_t jpeg_len = 0;
     struct jpeg_compress_struct cinfo;
-	struct jpeg_error_mgr jerr;
-	JSAMPROW y_rows[16];
-	JSAMPROW u_rows[8];
-	JSAMPROW v_rows[8];
+    struct jpeg_error_mgr jerr;
+    JSAMPROW y_rows[16];
+    JSAMPROW u_rows[8];
+    JSAMPROW v_rows[8];
     JSAMPARRAY rows[] = { y_rows, u_rows, v_rows };
     char filename[40];
 
-	cinfo.err = jpeg_std_error(&jerr);
-	jpeg_create_compress(&cinfo);
+    cinfo.err = jpeg_std_error(&jerr);
+    jpeg_create_compress(&cinfo);
 
-	cinfo.image_width = settings->width;
-	cinfo.image_height = settings->height;
-	cinfo.input_components = 3;
-	cinfo.in_color_space = JCS_YCbCr;
+    cinfo.image_width = settings->width;
+    cinfo.image_height = settings->height;
+    cinfo.input_components = 3;
+    cinfo.in_color_space = JCS_YCbCr;
     cinfo.jpeg_color_space = cinfo.in_color_space;
-	cinfo.restart_interval = 0;
+    cinfo.restart_interval = 0;
 
     //jpeg_set_colorspace(&cinfo, cinfo.in_color_space);
-	jpeg_set_defaults(&cinfo);
-	cinfo.raw_data_in = TRUE;
-	jpeg_set_quality(&cinfo, jpeg_quality, TRUE);
+    jpeg_set_defaults(&cinfo);
+    cinfo.raw_data_in = TRUE;
+    jpeg_set_quality(&cinfo, jpeg_quality, TRUE);
     // END JPEG STUFF
 
 
@@ -106,10 +107,9 @@ static void* processingThread(void* arg) {
     // END MOTION DETECTION STUFF
 
 
-    unsigned int detection_countdown = settings->fps;
     unsigned int frame_counter = 0;
 
-    unsigned int mjpeg_delta = settings->fps * 60; // once a minute
+    unsigned int mjpeg_delta = settings->fps; // * 60; // once a second
     unsigned int mjpeg_threshold = mjpeg_delta;
     unsigned int mjpeg_connections = 0;
 
@@ -125,6 +125,7 @@ static void* processingThread(void* arg) {
         processingQueue.pop_front(); // why both?
         pthread_mutex_unlock(&processingMutex);
 
+        // TODO: make this work with graceful shutdowns and HUPs
         if (request->status() == Request::RequestCancelled) {
             // skip?
             printf("CANCEL\n");
@@ -139,7 +140,6 @@ static void* processingThread(void* arg) {
         */
 
         frame_counter++;
-        detection_count++;
 
         // do mjpeg compression?
         // only if we have connections
@@ -173,7 +173,7 @@ static void* processingThread(void* arg) {
 
                 auto start_time = std::chrono::high_resolution_clock::now();
                 // use a fresh jpeg_buffer each iteration to avoid OOM:
-                // https://github.com/libjpeg-turbo/libjpeg-turbo/issues/610
+        // https://github.com/libjpeg-turbo/libjpeg-turbo/issues/610
                 jpeg_mem_dest(&cinfo, &jpeg_buffer, &jpeg_len);	
                 // this takes 80-130ms, longer than frame at 10fps
                 jpeg_start_compress(&cinfo, TRUE);
@@ -225,7 +225,7 @@ static void* processingThread(void* arg) {
         request->reuse(Request::ReuseBuffers);
         camera->queueRequest(request);
     }
-	jpeg_destroy_compress(&cinfo);
+    jpeg_destroy_compress(&cinfo);
 
     free(jpeg_buffer);
     
@@ -235,7 +235,6 @@ static void* processingThread(void* arg) {
 
 time_t previousSeconds = 0;
 int frames = 0;
-unsigned short detection_countdown = fps;
 unsigned int frame_counter = 0;
 static void requestComplete(Request *request)
 {
@@ -249,6 +248,8 @@ static void requestComplete(Request *request)
         previousSeconds = delta.tv_sec;
     }
 
+    // TODO: can we add a timestamp into the frame here?
+
     pthread_mutex_lock(&processingMutex);
     processingQueue.push_back(request);
     pthread_cond_signal(&processingCondition);
@@ -257,16 +258,6 @@ static void requestComplete(Request *request)
 
 int main()
 {
-    // TODO: this isn't right
-    /*
-    while (width % align) {
-        width *= 2;
-    }
-    while (height % align) {
-        height *= 2;
-    }
-    printf("aligned to %d x %d\n", width, height);
-    */
     settings.width = width;
     settings.height = height;
     settings.stride = width;
@@ -296,10 +287,10 @@ int main()
     // VideoRecording
     std::unique_ptr<CameraConfiguration> config = camera->generateConfiguration( { StreamRole::VideoRecording } );
     StreamConfiguration &streamConfig = config->at(0);
-    // TODO: will choosing this over the default of YUV420 help us?
+
     //streamConfig.pixelFormat = libcamera::formats::RGB888;
     streamConfig.pixelFormat = libcamera::formats::YUV420;
-    streamConfig.colorSpace = libcamera::ColorSpace::Jpeg;
+    streamConfig.colorSpace = libcamera::ColorSpace::Jpeg; // TODO: is this necessary?
 
     streamConfig.size.width = width;
     streamConfig.size.height = height;
@@ -308,17 +299,16 @@ int main()
     // 10 works ... oddly, but 20 fails behind the scenes. doesn't apear
     // to be an error we can catch
     streamConfig.bufferCount = 10;
-    // TODO: calculate alignment ... think YUV420 needs 64bit alignment according to:
-    // https://github.com/raspberrypi/picamera2/blob/main/picamera2/configuration.py
 
-    // TODO: check return value of this
     CameraConfiguration::Status status = config->validate();
     if (status == CameraConfiguration::Invalid) {
         fprintf(stderr, "Camera Configuration is invalid\n");
     } else if (status == CameraConfiguration::Adjusted) {
         fprintf(stderr, "Camera Configuration was invalid and has been adjusted\n");
     }
-    // configuration might have set an unexpected stride, use it
+    // Configuration might have set an unexpected stride, use it.
+    // Think YUV420 needs 64bit alignment according to:
+    // https://github.com/raspberrypi/picamera2/blob/main/picamera2/configuration.py
     settings.stride = streamConfig.stride;
     printf("Stride after configuring: %d\n", streamConfig.stride);
     printf("Color space: %s\n", streamConfig.colorSpace->toString().c_str());
@@ -329,7 +319,7 @@ int main()
 
     for (StreamConfiguration &cfg : *config) {
         // TODO: it's possible we'll need our own allocator for raspi,
-        // so we can enqueue many frames for processing
+        // so we can enqueue many frames for processing in other threads
         int ret = allocator->allocate(cfg.stream());
         // This error handling doesn't catch a failure to allocate 20 buffers
         if (ret < 0) {
@@ -356,33 +346,10 @@ int main()
 
         const std::unique_ptr<FrameBuffer> &buffer = buffers[i];
 
-        // create mmap
-        // SCRATCHED FROM libcamera-apps .... NOT SURE I NEED THIS
-        /*
-        // from libcamera-apps:
-        // "Single plane" buffers appear as multi-plane here, but we can spot them because then
-        // planes all share the same fd. We accumulate them so as to mmap the buffer only once.
-        size_t buffer_size = 0;
-        for (unsigned i = 0; i < buffer->planes().size(); i++) {
-            const FrameBuffer::Plane &plane = buffer->planes()[i];
-
-            buffer_size += plane.length;
-
-            if (i == buffer->planes().size() - 1 || plane.fd.get() != buffer->planes()[i + 1].fd.get()) {
-                void *memory = mmap(NULL, buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED, plane.fd.get(), 0);
-                mapped_buffers[buffer.get()].push_back(
-                    libcamera::Span<uint8_t>(static_cast<uint8_t *>(memory), buffer_size)
-                );
-            }
-        }
-        */
-        
-        // copy comment above
-        // can't do an mmap for every plane portion. if planes share and FD, subsequent mmaps 
-        // return -1
-
-        // we know what kind of planes we're dealing with, i think
-        // they shoudl all have the same fd
+        // Unless libcamera or other libs change, we know what kind of planes we're dealing with.
+        // For each buffer, planes seem to share the same dmabuf fd.
+        // However, libcamera-apps handles this with looping logic.
+        // NOTE: At one point I tried more than 1 mmap per dmabuf, but for some reason it didn't work.
         auto planes = buffer->planes();
         size_t buffer_size = planes[0].length + planes[1].length + planes[2].length;
         if (planes[0].fd.get() != planes[1].fd.get() || planes[0].fd.get() != planes[2].fd.get()) {
@@ -396,7 +363,7 @@ int main()
             printf("UNEXPECTED MMAP\n");
             return 1;
         }
-
+        // Get a handle to each plane's memory region within the mmap/dmabuf
         mapped_buffers[buffer.get()].push_back(
             libcamera::Span<uint8_t>(memory, planes[0].length)
         );
@@ -445,6 +412,12 @@ int main()
     pthread_cancel(processingThreadId);
     pthread_join(processingThreadId, &processingThreadStatus);
 
+    camera->stop();
+    allocator->free(stream);
+    delete allocator;
+    camera->release();
+    camera.reset();
+    cm->stop();
 
     return 0;
 }
