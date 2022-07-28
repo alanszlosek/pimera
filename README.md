@@ -1,12 +1,14 @@
 # PiMera
 
-NOTE: This is a work in progress. Not fully working yet.
+PiMera is security and critter camera application for Raspberry Pi computers and the Rasperry Pi camera modules.
 
-A security and critter camera application for Raspberry Pi computers and the Rasperry Pi camera modules.
-
-This is not entirely a new project. I created a similar project in Python 3 many years ago, see [raspi-hd-surveillance](https://github.com/alanszlosek/raspi-hd-surveillance).However, Raspberry Pi is [moving away](https://www.raspberrypi.com/documentation/accessories/camera.html) from the proprietary Broadcom camera stack to the open source [libcamera](https://libcamera.org) library, so now seemed like a good time to re-think things. Plus, I enjoy writing in C (C++ not so much).
+If you would like to watch me build this project, check out my [PiMera YouTube playlist](https://www.youtube.com/watch?v=joc-nHM-NFU&list=PLGonE3T1sorRArqmtf22yUj0KgO2FpFvG).
 
 I'm still getting comfortable with libcamera, but am hoping things will go faster once I can begin porting my Python code to C.
+
+## History
+
+This is not entirely a new project. I created a similar project in Python 3 many years ago, see the [raspi-hd-surveillance](https://github.com/alanszlosek/raspi-hd-surveillance) GitHub repository. However, Raspberry Pi is [moving away](https://www.raspberrypi.com/documentation/accessories/camera.html) from the proprietary Broadcom camera stack to the open source [libcamera](https://libcamera.org) library, so now seemed like a good time to re-think things. Plus, I enjoy writing in C (C++ not so much).
 
 # Features
 
