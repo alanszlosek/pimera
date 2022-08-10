@@ -7,6 +7,7 @@
 
 #include <pthread.h>
 #include <sys/mman.h>
+#include <string.h>
 
 #include <jpeglib.h>
 #if JPEG_LIB_VERSION_MAJOR > 9 || (JPEG_LIB_VERSION_MAJOR == 9 && JPEG_LIB_VERSION_MINOR >= 4)
@@ -19,6 +20,9 @@ using namespace libcamera;
 
 static std::shared_ptr<Camera> camera;
 
+// TODO: convert this to vector or array[3] of uint8_t*
+// we can pre-calculate length of each YUV data buffer in main
+// and store in settings
 std::map<FrameBuffer *, std::vector<libcamera::Span<uint8_t>>> mapped_buffers;
 
 
@@ -27,9 +31,9 @@ pthread_cond_t processingCondition;
 std::list<libcamera::Request*> processingQueue;
 
 pthread_mutex_t connectionsMutex;
-unsigned int mjpegConnections = 1;
+unsigned int mjpegConnections = 0;
 
-
+// for saving JPEG while debugging, will go away
 FILE* fp;
 
 int running = 1;
@@ -38,8 +42,9 @@ int running = 1;
 //int width = 1640;
 //int height = 922;
 // 1920 1080
-int width = 1920;
-int height = 1080;
+// 640 480
+int width = 640;
+int height = 480;
 
 // TODO: i don't know how to align
 int align = 16;
@@ -51,6 +56,11 @@ typedef struct PiMeraSettings {
     unsigned int stride;
     unsigned int fps;
     unsigned int mjpeg_quality = 90;
+
+    // TODO: pre-calculate these in main for YUV plane buffers
+    size_t y_length;
+    size_t uv_length;
+
 } PiMeraSettings;
 
 PiMeraSettings settings;
@@ -58,7 +68,7 @@ PiMeraSettings settings;
 
 static void* processingThread(void* arg) {
     const PiMeraSettings *settings = (const PiMeraSettings*)arg;
-    //other settings
+    // TODO: push this into settings struct
     int jpeg_quality = 90;
 
     libcamera::Request* request;
@@ -69,42 +79,76 @@ static void* processingThread(void* arg) {
     uint8_t *Y;
     uint8_t *U;
     uint8_t *V;
-    size_t Y_size;
-    size_t U_size;
-    size_t V_size;
     uint8_t *Y_max;
     uint8_t *U_max;
     uint8_t *V_max;
-    uint8_t* jpeg_buffer = NULL;
-    jpeg_mem_len_t jpeg_len = 0;
-    struct jpeg_compress_struct cinfo;
-    struct jpeg_error_mgr jerr;
+    
     JSAMPROW y_rows[16];
     JSAMPROW u_rows[8];
     JSAMPROW v_rows[8];
-    JSAMPARRAY rows[] = { y_rows, u_rows, v_rows };
+    // for yuv data
+    JSAMPARRAY rows_yuv[] = { y_rows, u_rows, v_rows };
+    struct jpeg_compress_struct cinfo_yuv;
+    struct jpeg_error_mgr jerr_yuv;
+    uint8_t* jpeg_buffer_yuv = NULL;
+    jpeg_mem_len_t jpeg_len_yuv = 0;
+    // for grayscale data
+    uint8_t* uv_data;
+    // static row data for U and V since we want grayscale
+    JSAMPROW grayscale_uv_rows[8];
+    // use same data for u and v
+    JSAMPARRAY grayscale_rows[] = { y_rows, grayscale_uv_rows, grayscale_uv_rows };
+    struct jpeg_compress_struct cinfo_grayscale;
+    struct jpeg_error_mgr jerr_grayscale;
+    uint8_t* jpeg_buffer_grayscale = NULL;
+    jpeg_mem_len_t jpeg_len_grayscale = 0;
     char filename[40];
 
-    cinfo.err = jpeg_std_error(&jerr);
-    jpeg_create_compress(&cinfo);
+    // yuv
+    cinfo_yuv.err = jpeg_std_error(&jerr_yuv);
+    jpeg_create_compress(&cinfo_yuv);
+    cinfo_yuv.image_width = settings->stride;
+    cinfo_yuv.image_height = settings->height;
+    cinfo_yuv.input_components = 3;
+    cinfo_yuv.in_color_space = JCS_YCbCr;
+    cinfo_yuv.jpeg_color_space = cinfo_yuv.in_color_space;
+    cinfo_yuv.restart_interval = 0;
+    jpeg_set_defaults(&cinfo_yuv);
+    cinfo_yuv.raw_data_in = TRUE;
+    jpeg_set_quality(&cinfo_yuv, jpeg_quality, TRUE);
 
-    cinfo.image_width = settings->width;
-    cinfo.image_height = settings->height;
-    cinfo.input_components = 3;
-    cinfo.in_color_space = JCS_YCbCr;
-    cinfo.jpeg_color_space = cinfo.in_color_space;
-    cinfo.restart_interval = 0;
+    // grayscale
+    cinfo_grayscale.err = jpeg_std_error(&jerr_grayscale);
+    jpeg_create_compress(&cinfo_grayscale);
+    // TODO: figure out how to exclude extra stride pixels
+    cinfo_grayscale.image_width = settings->stride;
+    cinfo_grayscale.image_height = settings->height;
+    //cinfo_grayscale.num_components = 1;
+    cinfo_grayscale.input_components = 3;
+    cinfo_grayscale.in_color_space = JCS_YCbCr;
+    //cinfo_grayscale.jpeg_color_space = JCS_GRAYSCALE;
+    cinfo_grayscale.restart_interval = 0;
+    jpeg_set_defaults(&cinfo_grayscale);
+    // since can't get grayscale color space to work, prepare array of uv data to simulate grayscale from Y plane data
+    // prepare 8 rows of data, maybe?
+    int uv_length = (settings->stride * 8) / 2;
+    uv_data = (uint8_t*) malloc(uv_length);
+    memset(uv_data, 128, uv_length);
+    // prepare grayscale_uv_rows pointers
+    uint8_t* U_row = uv_data;
+    for (int i = 0; i < 8; i++, U_row += stride2) {
+        grayscale_uv_rows[i] = U_row;
+    }
 
-    //jpeg_set_colorspace(&cinfo, cinfo.in_color_space);
-    jpeg_set_defaults(&cinfo);
-    cinfo.raw_data_in = TRUE;
-    jpeg_set_quality(&cinfo, jpeg_quality, TRUE);
+    // even though working with Y plane, raw doesn't work
+    // JSAMPARRAY with just Y data and write raw lines ends up generating an image with only half of the scanlines filled in
+
+    // raw lets us do detection with compression in around 60ms, otherwise 250ms
+    cinfo_grayscale.raw_data_in = TRUE;
+    jpeg_set_quality(&cinfo_grayscale, jpeg_quality, TRUE);
+    
+
     // END JPEG STUFF
-
-
-    // BEGIN MOTION DETECTION STUFF
-    uint8_t* previousFrame = (uint8_t*) malloc(settings->width * settings->height);
-    // END MOTION DETECTION STUFF
 
 
     unsigned int frame_counter = 0;
@@ -113,8 +157,53 @@ static void* processingThread(void* arg) {
     unsigned int mjpeg_threshold = mjpeg_delta;
     unsigned int mjpeg_connections = 0;
 
+    // BEGIN MOTION DETECTION STUFF
+    uint8_t* previousFrame1 = (uint8_t*) malloc(settings->stride * settings->height);
+    uint8_t* previousFrame2 = (uint8_t*) malloc(settings->stride * settings->height);
+    uint8_t* previousFrame;
+    uint8_t* motionFrame = (uint8_t*) malloc(settings->stride * settings->height);
+    // we'll push pixels with motion to 255, leave others at their regular values,
+    // unsure whether this will help us visualize where motion took place
+    uint8_t* highlightedMotionFrame = (uint8_t*) malloc(settings->stride * settings->height);; // 
     unsigned int detection_delta = settings->fps / 3;
     unsigned int detection_threshold = detection_delta;
+
+    unsigned int detected_pixels_threshold = settings->y_length * 0.10; // number of pixels that must be changed to detect motion
+    // END MOTION DETECTION STUFF
+
+    printf("Pixel threshold %d\n", detected_pixels_threshold);
+
+    // Wait for first frame, and store it in previousFrame
+    pthread_mutex_lock(&processingMutex);
+    while (processingQueue.size() == 0) {
+        pthread_cond_wait(&processingCondition, &processingMutex);
+    }
+    printf("Storing first frame\n");
+    request = processingQueue.front();
+    processingQueue.pop_front(); // TODO: why both?
+    pthread_mutex_unlock(&processingMutex);
+    // TODO: hoist up these declarations
+    const std::map<const Stream*, FrameBuffer*> &buffers = request->buffers();
+    FrameBuffer* fb = buffers.begin()->second;
+    previousFrame = previousFrame1;
+    Y = mapped_buffers[ fb ][0].data();
+    // TODO: only copy regions we care about, once that data is available
+    for (int i = 0; i < (settings->stride * settings->height); i++) {
+        previousFrame[i] = Y[i];
+    }
+
+    // for testing grayscale
+    /*
+    for (int y = 0, i = 0; y < settings->height; y++) {
+        for (int x = 0; x < settings->width; x++, i++) {
+            if (x > 255) {
+                motionFrame[i] = 255;
+            } else {
+                motionFrame[i] = x;
+            }
+        }
+    }
+    */
 
     while (running) {
         pthread_mutex_lock(&processingMutex);
@@ -122,7 +211,7 @@ static void* processingThread(void* arg) {
             pthread_cond_wait(&processingCondition, &processingMutex);
         }
         request = processingQueue.front();
-        processingQueue.pop_front(); // why both?
+        processingQueue.pop_front(); // TODO: why both?
         pthread_mutex_unlock(&processingMutex);
 
         // TODO: make this work with graceful shutdowns and HUPs
@@ -141,6 +230,9 @@ static void* processingThread(void* arg) {
 
         frame_counter++;
 
+        const std::map<const Stream*, FrameBuffer*> &buffers2 = request->buffers();
+        FrameBuffer* fb = buffers2.begin()->second;
+
         // do mjpeg compression?
         // only if we have connections
         // TODO: fix naming on these
@@ -153,32 +245,24 @@ static void* processingThread(void* arg) {
         // is anyone trying to watch the stream?
         if (mjpeg_connections > 0) {
             if (frame_counter > mjpeg_threshold) {
-                const std::map<const Stream *, FrameBuffer *> &buffers = request->buffers();
-                FrameBuffer* fb = buffers.begin()->second;
-
                 // update threshold for when we should encode next mjpeg frame
                 mjpeg_threshold = frame_counter + mjpeg_delta;
 
-                // need to push to thread
                 Y = mapped_buffers[ fb ][0].data();
                 U = mapped_buffers[ fb ][1].data();
                 V = mapped_buffers[ fb ][2].data();
-                Y_size = mapped_buffers[ fb ][0].size_bytes();
-                U_size = mapped_buffers[ fb ][1].size_bytes();
-                V_size = mapped_buffers[ fb ][2].size_bytes();
-                Y_max = (Y + Y_size) - settings->stride;
-                U_max = (U + U_size) - stride2;
-                V_max = (V + V_size) - stride2;
-
+                Y_max = (Y + settings->y_length) - settings->stride;
+                U_max = (U + settings->uv_length) - stride2;
+                V_max = (V + settings->uv_length) - stride2;
 
                 auto start_time = std::chrono::high_resolution_clock::now();
                 // use a fresh jpeg_buffer each iteration to avoid OOM:
-        // https://github.com/libjpeg-turbo/libjpeg-turbo/issues/610
-                jpeg_mem_dest(&cinfo, &jpeg_buffer, &jpeg_len);	
+                // https://github.com/libjpeg-turbo/libjpeg-turbo/issues/610
+                jpeg_mem_dest(&cinfo_yuv, &jpeg_buffer_yuv, &jpeg_len_yuv);
                 // this takes 80-130ms, longer than frame at 10fps
-                jpeg_start_compress(&cinfo, TRUE);
+                jpeg_start_compress(&cinfo_yuv, TRUE);
 
-                for (uint8_t *Y_row = Y, *U_row = U, *V_row = V; cinfo.next_scanline < settings->height;)
+                for (uint8_t *Y_row = Y, *U_row = U, *V_row = V; cinfo_yuv.next_scanline < settings->height;)
                 {
                     for (int i = 0; i < 16; i++, Y_row += settings->stride) {
                         y_rows[i] = std::min(Y_row, Y_max);
@@ -189,12 +273,11 @@ static void* processingThread(void* arg) {
                     }
 
                     //JSAMPARRAY rows[] = { y_rows, u_rows, v_rows };
-                    jpeg_write_raw_data(&cinfo, rows, 16);
+                    jpeg_write_raw_data(&cinfo_yuv, rows_yuv, 16);
                     //jpeg_write_scanlines(&cinfo, rows, 16);
                 }
-                jpeg_finish_compress(&cinfo);
-                printf("new len %lu\n", jpeg_len);
-                //jpeg_len = 0;
+                jpeg_finish_compress(&cinfo_yuv);
+                //printf("new len %lu\n", jpeg_len_yuv);
                 
                 auto ms_int = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start_time);
                 printf("Encode time %ldms\n", ms_int.count());
@@ -202,32 +285,100 @@ static void* processingThread(void* arg) {
 
                 snprintf(filename, 40, "/home/pi/stills/%d.jpeg", frame_counter);
                 fp = fopen(filename, "wb");
-                fwrite(jpeg_buffer, jpeg_len, 1, fp);
+                fwrite(jpeg_buffer_yuv, jpeg_len_yuv, 1, fp);
                 fclose(fp);
 
-                free(jpeg_buffer);
-                jpeg_buffer = NULL;
+                free(jpeg_buffer_yuv);
+                jpeg_buffer_yuv = NULL;
             }
         }
 
 
         // DO H264 ENCODING?
 
-        // DO MOTION DETECTION?
+        // SHOULD WE DO MOTION DETECTION FOR THIS FRAME?
         // let's try assuming the Y channel IS gray
         if (frame_counter > detection_threshold) {
             detection_threshold = frame_counter + detection_delta;
+            //printf("Checking frame for motion\n");
 
-            // 
+            uint8_t* nextFrame = (previousFrame == previousFrame1 ? previousFrame2 : previousFrame1);
+            uint detected_pixels = 0;
+            uint compared_pixels = 0;
+
+            auto start_time = std::chrono::high_resolution_clock::now();
+
+            Y = mapped_buffers[ fb ][0].data();
+            // TODO: only compare regions we care about, once that data is available
+            // TODO: this takes 500ms to 1080p, not fast enough
+            int end = (settings->stride * settings->height);
+            for (int i = 0; i < end; i++) {
+                // compare previous and current
+                int delta = abs(previousFrame[i] - Y[i]);
+                //printf("Delta: %d Previous: %d Current %d\n", delta, previousFrame[i], Y[i]);
+                compared_pixels++;
+                // update motion pixels frame ... try to highlight pixels in current frame that have changed from previous
+                if (delta > 35) {
+                    //printf("Found different pixels\n");
+                    motionFrame[i] = 255;
+                    detected_pixels++;
+                } else {
+                    motionFrame[i] = Y[i];
+                }
+            }
+            auto ms_int = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start_time);
+
+            if (detected_pixels > detected_pixels_threshold) {
+                // motion was detected!
+                printf("Time: %ldms Compared pixels: %d Changed pixels: %d MOTION DETECTED\n", ms_int.count(), compared_pixels, detected_pixels);
+
+                // swap previousFrame pointer for next time
+                memcpy(previousFrame, Y, settings->y_length);
+
+                // need to push to thread
+                Y = motionFrame;
+                Y_max = (Y + settings->y_length) - settings->stride;
+                U = uv_data;
+                U_max = (U + settings->uv_length) - stride2;
+
+                // use a fresh jpeg_buffer each iteration to avoid OOM:
+                // https://github.com/libjpeg-turbo/libjpeg-turbo/issues/610
+                jpeg_mem_dest(&cinfo_grayscale, &jpeg_buffer_grayscale, &jpeg_len_grayscale);
+                // this takes 80-130ms, longer than frame at 10fps
+                jpeg_start_compress(&cinfo_grayscale, TRUE);
+
+                for (uint8_t *Y_row = Y, *U_row = U, *V_row = V; cinfo_grayscale.next_scanline < settings->height;)
+                {
+                    for (int i = 0; i < 16; i++, Y_row += settings->stride) {
+                        //rows_grayscale[i] = std::min(Y_row, Y_max);
+                        y_rows[i] = std::min(Y_row, Y_max);
+                    }
+
+                    jpeg_write_raw_data(&cinfo_grayscale, grayscale_rows, 16);
+                    //jpeg_write_scanlines(&cinfo_grayscale, rows_grayscale, 16);
+                }
+                jpeg_finish_compress(&cinfo_grayscale);
+                
+                snprintf(filename, 40, "/home/pi/stills/motion_%d.jpeg", frame_counter);
+                fp = fopen(filename, "wb");
+                fwrite(jpeg_buffer_grayscale, jpeg_len_grayscale, 1, fp);
+                fclose(fp);
+
+                free(jpeg_buffer_grayscale);
+                jpeg_buffer_grayscale = NULL;
+            } else {
+                printf("Time: %ldms Compared pixels: %d Changed pixels: %d\n", ms_int.count(), compared_pixels, detected_pixels);
+            }
         }
-
 
         request->reuse(Request::ReuseBuffers);
         camera->queueRequest(request);
     }
-    jpeg_destroy_compress(&cinfo);
-
-    free(jpeg_buffer);
+    //jpeg_destroy_compress(&cinfo_yuv);
+    jpeg_destroy_compress(&cinfo_grayscale);
+    // Free motion detection buffers
+    free(previousFrame);
+    free(uv_data);
     
     return NULL;
 }
@@ -267,7 +418,7 @@ int main()
     void* processingThreadStatus;
     pthread_mutex_init(&processingMutex, NULL);
     pthread_cond_init(&processingCondition, NULL);
-    pthread_create(&processingThreadId, NULL, processingThread, (void*)&settings);
+    
 
     std::unique_ptr<CameraManager> cm = std::make_unique<CameraManager>();
     cm->start();
@@ -312,6 +463,8 @@ int main()
     settings.stride = streamConfig.stride;
     printf("Stride after configuring: %d\n", streamConfig.stride);
     printf("Color space: %s\n", streamConfig.colorSpace->toString().c_str());
+    settings.y_length = settings.stride * settings.height;
+    settings.uv_length = settings.y_length / 4; // I think this is the right size
 
     camera->configure(config.get());
 
@@ -358,6 +511,13 @@ int main()
             return 1;
         }
 
+        /*
+        printf("Plane lengths. Y: %d U: %d V: %d\n",
+            planes[0].length,
+            planes[1].length,
+            planes[2].length);
+        */
+
         uint8_t* memory = (uint8_t*)mmap(NULL, buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED, planes[0].fd.get(), 0);
         if (!memory) {
             printf("UNEXPECTED MMAP\n");
@@ -400,16 +560,26 @@ int main()
     for (auto &request : requests)
        camera->queueRequest(request.get());
 
+    // start thread
+    pthread_create(&processingThreadId, NULL, processingThread, (void*)&settings);
+
     //60 * 60 * 24 * 7; // days
     int duration = 60;
     duration = 3600 * 24; // 12 hours
+    duration = 3600 * 2;
 
     for (int i = 0; i < duration; i++) {
         std::cout << "Sleeping" << std::endl;
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
 
+    running = 0;
     pthread_cancel(processingThreadId);
+    // figure out how to cancel this thread properly
+    pthread_mutex_lock(&processingMutex);
+    pthread_cond_signal(&processingCondition);
+    pthread_mutex_unlock(&processingMutex);
+
     pthread_join(processingThreadId, &processingThreadStatus);
 
     camera->stop();
