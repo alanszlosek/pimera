@@ -23,7 +23,7 @@ static std::shared_ptr<Camera> camera;
 // TODO: convert this to vector or array[3] of uint8_t*
 // we can pre-calculate length of each YUV data buffer in main
 // and store in settings
-std::map<FrameBuffer *, std::vector<libcamera::Span<uint8_t>>> mapped_buffers;
+std::map<FrameBuffer *, std::vector<uint8_t*>> mapped_buffers;
 
 
 pthread_mutex_t processingMutex;
@@ -45,9 +45,6 @@ int running = 1;
 // 640 480
 int width = 640;
 int height = 480;
-
-// TODO: i don't know how to align
-int align = 16;
 int fps = 10;
 
 typedef struct PiMeraSettings {
@@ -56,6 +53,8 @@ typedef struct PiMeraSettings {
     unsigned int stride;
     unsigned int fps;
     unsigned int mjpeg_quality = 90;
+    // if this percentage of pixels change, motion is detected
+    float percentage = 0.05;
 
     // TODO: pre-calculate these in main for YUV plane buffers
     size_t y_length;
@@ -68,9 +67,6 @@ PiMeraSettings settings;
 
 static void* processingThread(void* arg) {
     const PiMeraSettings *settings = (const PiMeraSettings*)arg;
-    // TODO: push this into settings struct
-    int jpeg_quality = 90;
-
     libcamera::Request* request;
 
     // BEGIN JPEG STUFF
@@ -115,7 +111,7 @@ static void* processingThread(void* arg) {
     cinfo_yuv.restart_interval = 0;
     jpeg_set_defaults(&cinfo_yuv);
     cinfo_yuv.raw_data_in = TRUE;
-    jpeg_set_quality(&cinfo_yuv, jpeg_quality, TRUE);
+    jpeg_set_quality(&cinfo_yuv, settings->mjpeg_quality, TRUE);
 
     // grayscale
     cinfo_grayscale.err = jpeg_std_error(&jerr_grayscale);
@@ -145,7 +141,7 @@ static void* processingThread(void* arg) {
 
     // raw lets us do detection with compression in around 60ms, otherwise 250ms
     cinfo_grayscale.raw_data_in = TRUE;
-    jpeg_set_quality(&cinfo_grayscale, jpeg_quality, TRUE);
+    jpeg_set_quality(&cinfo_grayscale, settings->mjpeg_quality, TRUE);
     
 
     // END JPEG STUFF
@@ -153,6 +149,7 @@ static void* processingThread(void* arg) {
 
     unsigned int frame_counter = 0;
 
+    // TODO: the threshold variable names need a rethink
     unsigned int mjpeg_delta = settings->fps; // * 60; // once a second
     unsigned int mjpeg_threshold = mjpeg_delta;
     unsigned int mjpeg_connections = 0;
@@ -168,7 +165,8 @@ static void* processingThread(void* arg) {
     unsigned int detection_delta = settings->fps / 3;
     unsigned int detection_threshold = detection_delta;
 
-    unsigned int detected_pixels_threshold = settings->y_length * 0.10; // number of pixels that must be changed to detect motion
+    // number of pixels that must be changed to detect motion
+    unsigned int detected_pixels_threshold = settings->y_length * settings->percentage;
     // END MOTION DETECTION STUFF
 
     printf("Pixel threshold %d\n", detected_pixels_threshold);
@@ -186,7 +184,7 @@ static void* processingThread(void* arg) {
     const std::map<const Stream*, FrameBuffer*> &buffers = request->buffers();
     FrameBuffer* fb = buffers.begin()->second;
     previousFrame = previousFrame1;
-    Y = mapped_buffers[ fb ][0].data();
+    Y = mapped_buffers[ fb ][0];
     // TODO: only copy regions we care about, once that data is available
     for (int i = 0; i < (settings->stride * settings->height); i++) {
         previousFrame[i] = Y[i];
@@ -248,9 +246,9 @@ static void* processingThread(void* arg) {
                 // update threshold for when we should encode next mjpeg frame
                 mjpeg_threshold = frame_counter + mjpeg_delta;
 
-                Y = mapped_buffers[ fb ][0].data();
-                U = mapped_buffers[ fb ][1].data();
-                V = mapped_buffers[ fb ][2].data();
+                Y = mapped_buffers[ fb ][0];
+                U = mapped_buffers[ fb ][1];
+                V = mapped_buffers[ fb ][2];
                 Y_max = (Y + settings->y_length) - settings->stride;
                 U_max = (U + settings->uv_length) - stride2;
                 V_max = (V + settings->uv_length) - stride2;
@@ -298,6 +296,7 @@ static void* processingThread(void* arg) {
 
         // SHOULD WE DO MOTION DETECTION FOR THIS FRAME?
         // let's try assuming the Y channel IS gray
+        // TODO: speed this up with vector processing or SIMD
         if (frame_counter > detection_threshold) {
             detection_threshold = frame_counter + detection_delta;
             //printf("Checking frame for motion\n");
@@ -308,7 +307,12 @@ static void* processingThread(void* arg) {
 
             auto start_time = std::chrono::high_resolution_clock::now();
 
-            Y = mapped_buffers[ fb ][0].data();
+            Y = mapped_buffers[ fb ][0];
+            /*
+            NOTE: copying pixels in bulk ahead of time, instead of using an else below
+            to copy unchanged pixels individually saves 20ms off
+            */
+            memcpy(motionFrame, Y, settings->y_length);
             // TODO: only compare regions we care about, once that data is available
             // TODO: this takes 500ms to 1080p, not fast enough
             int end = (settings->stride * settings->height);
@@ -317,13 +321,10 @@ static void* processingThread(void* arg) {
                 int delta = abs(previousFrame[i] - Y[i]);
                 //printf("Delta: %d Previous: %d Current %d\n", delta, previousFrame[i], Y[i]);
                 compared_pixels++;
-                // update motion pixels frame ... try to highlight pixels in current frame that have changed from previous
                 if (delta > 35) {
-                    //printf("Found different pixels\n");
+                    // highlight pixels that have changed
                     motionFrame[i] = 255;
                     detected_pixels++;
-                } else {
-                    motionFrame[i] = Y[i];
                 }
             }
             auto ms_int = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start_time);
@@ -524,16 +525,9 @@ int main()
             return 1;
         }
         // Get a handle to each plane's memory region within the mmap/dmabuf
-        mapped_buffers[buffer.get()].push_back(
-            libcamera::Span<uint8_t>(memory, planes[0].length)
-        );
-        mapped_buffers[buffer.get()].push_back(
-            libcamera::Span<uint8_t>(memory + planes[0].length, planes[1].length)
-        );
-        mapped_buffers[buffer.get()].push_back(
-            libcamera::Span<uint8_t>(memory + planes[0].length + planes[1].length, planes[2].length)
-        );
-
+        mapped_buffers[buffer.get()].push_back(memory);
+        mapped_buffers[buffer.get()].push_back(memory + planes[0].length);
+        mapped_buffers[buffer.get()].push_back(memory + planes[0].length + planes[1].length);
 
         int ret = request->addBuffer(stream, buffer.get());
         if (ret < 0)
@@ -569,7 +563,7 @@ int main()
     duration = 3600 * 2;
 
     for (int i = 0; i < duration; i++) {
-        std::cout << "Sleeping" << std::endl;
+        //std::cout << "Sleeping" << std::endl;
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
 
