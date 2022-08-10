@@ -101,6 +101,7 @@ static void* processingThread(void* arg) {
     char filename[40];
 
     // yuv
+    // https://stackoverflow.com/questions/16390783/how-to-compress-yuyv-raw-data-to-jpeg-using-libjpeg
     cinfo_yuv.err = jpeg_std_error(&jerr_yuv);
     jpeg_create_compress(&cinfo_yuv);
     cinfo_yuv.image_width = settings->stride;
@@ -155,9 +156,7 @@ static void* processingThread(void* arg) {
     unsigned int mjpeg_connections = 0;
 
     // BEGIN MOTION DETECTION STUFF
-    uint8_t* previousFrame1 = (uint8_t*) malloc(settings->stride * settings->height);
-    uint8_t* previousFrame2 = (uint8_t*) malloc(settings->stride * settings->height);
-    uint8_t* previousFrame;
+    uint8_t* previousFrame = (uint8_t*) malloc(settings->stride * settings->height);
     uint8_t* motionFrame = (uint8_t*) malloc(settings->stride * settings->height);
     // we'll push pixels with motion to 255, leave others at their regular values,
     // unsure whether this will help us visualize where motion took place
@@ -183,7 +182,6 @@ static void* processingThread(void* arg) {
     // TODO: hoist up these declarations
     const std::map<const Stream*, FrameBuffer*> &buffers = request->buffers();
     FrameBuffer* fb = buffers.begin()->second;
-    previousFrame = previousFrame1;
     Y = mapped_buffers[ fb ][0];
     // TODO: only copy regions we care about, once that data is available
     for (int i = 0; i < (settings->stride * settings->height); i++) {
@@ -301,7 +299,6 @@ static void* processingThread(void* arg) {
             detection_threshold = frame_counter + detection_delta;
             //printf("Checking frame for motion\n");
 
-            uint8_t* nextFrame = (previousFrame == previousFrame1 ? previousFrame2 : previousFrame1);
             uint detected_pixels = 0;
             uint compared_pixels = 0;
 
@@ -312,14 +309,13 @@ static void* processingThread(void* arg) {
             NOTE: copying pixels in bulk ahead of time, instead of using an else below
             to copy unchanged pixels individually saves 20ms off
             */
+            // skipping motionFrame stuff altogether saves 2ms more
             memcpy(motionFrame, Y, settings->y_length);
             // TODO: only compare regions we care about, once that data is available
             // TODO: this takes 500ms to 1080p, not fast enough
-            int end = (settings->stride * settings->height);
-            for (int i = 0; i < end; i++) {
+            for (int i = 0; i < settings->y_length; i++) {
                 // compare previous and current
                 int delta = abs(previousFrame[i] - Y[i]);
-                //printf("Delta: %d Previous: %d Current %d\n", delta, previousFrame[i], Y[i]);
                 compared_pixels++;
                 if (delta > 35) {
                     // highlight pixels that have changed
@@ -327,6 +323,7 @@ static void* processingThread(void* arg) {
                     detected_pixels++;
                 }
             }
+
             auto ms_int = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start_time);
 
             if (detected_pixels > detected_pixels_threshold) {
@@ -339,8 +336,6 @@ static void* processingThread(void* arg) {
                 // need to push to thread
                 Y = motionFrame;
                 Y_max = (Y + settings->y_length) - settings->stride;
-                U = uv_data;
-                U_max = (U + settings->uv_length) - stride2;
 
                 // use a fresh jpeg_buffer each iteration to avoid OOM:
                 // https://github.com/libjpeg-turbo/libjpeg-turbo/issues/610
@@ -348,15 +343,13 @@ static void* processingThread(void* arg) {
                 // this takes 80-130ms, longer than frame at 10fps
                 jpeg_start_compress(&cinfo_grayscale, TRUE);
 
-                for (uint8_t *Y_row = Y, *U_row = U, *V_row = V; cinfo_grayscale.next_scanline < settings->height;)
+                for (uint8_t *Y_row = Y; cinfo_grayscale.next_scanline < settings->height;)
                 {
                     for (int i = 0; i < 16; i++, Y_row += settings->stride) {
-                        //rows_grayscale[i] = std::min(Y_row, Y_max);
                         y_rows[i] = std::min(Y_row, Y_max);
                     }
 
                     jpeg_write_raw_data(&cinfo_grayscale, grayscale_rows, 16);
-                    //jpeg_write_scanlines(&cinfo_grayscale, rows_grayscale, 16);
                 }
                 jpeg_finish_compress(&cinfo_grayscale);
                 
