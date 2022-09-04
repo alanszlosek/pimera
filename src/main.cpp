@@ -5,9 +5,17 @@
 
 #include <libcamera/libcamera.h>
 
+#include <arm_neon.h>
+#include <poll.h>
 #include <pthread.h>
+#include <signal.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+//#include <netinet/in.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <jpeglib.h>
 #if JPEG_LIB_VERSION_MAJOR > 9 || (JPEG_LIB_VERSION_MAJOR == 9 && JPEG_LIB_VERSION_MINOR >= 4)
@@ -30,22 +38,32 @@ pthread_mutex_t processingMutex;
 pthread_cond_t processingCondition;
 std::list<libcamera::Request*> processingQueue;
 
-pthread_mutex_t connectionsMutex;
-unsigned int mjpegConnections = 0;
+#define MAX_POLL_FDS 100
+pthread_mutex_t streamConnectionsMutex;
+std::list<int> streamConnections;
+pthread_mutex_t motionConnectionsMutex;
+std::list<int> motionConnections;
+struct pollfd http_fds[MAX_POLL_FDS];
+int http_fds_count = 0;
 
-// for saving JPEG while debugging, will go away
-FILE* fp;
 
+pthread_mutex_t runningMutex;
 int running = 1;
+
+// Miscellaneous
+pthread_mutex_t requestsAtCameraMetricMutex;
+pthread_mutex_t requestsAtQueueMetricMutex;
+int requestsAtCameraMetric = 0;
+int requestsAtQueueMetric = 0;
 
 
 //int width = 1640;
 //int height = 922;
 // 1920 1080
 // 640 480
-int width = 640;
-int height = 480;
-int fps = 10;
+int width = 1640;
+int height = 922;
+int fps = 20;
 
 typedef struct PiMeraSettings {
     unsigned int width;
@@ -54,7 +72,8 @@ typedef struct PiMeraSettings {
     unsigned int fps;
     unsigned int mjpeg_quality = 90;
     // if this percentage of pixels change, motion is detected
-    float percentage = 0.05;
+    float percentage_for_motion = 0.05;
+    uint8_t pixel_delta_threshold = 50;
 
     // TODO: pre-calculate these in main for YUV plane buffers
     size_t y_length;
@@ -63,6 +82,47 @@ typedef struct PiMeraSettings {
 } PiMeraSettings;
 
 PiMeraSettings settings;
+
+
+void logError(char const* msg, const char *func) {
+    // time prefix
+    char t[40];
+    time_t rawtime;
+    struct tm timeinfo;
+    time(&rawtime);
+    localtime_r(&rawtime, &timeinfo);
+    strftime(t, 40, "%Y-%m-%d %H:%M:%S", &timeinfo);
+
+    fprintf(stdout, "%s [ERR] in %s: %s\n", t, func, msg);
+    fflush(stdout);
+}
+void logInfo(char const* fmt, ...) {
+    // time prefix
+    char t[40];
+    time_t rawtime;
+    struct tm timeinfo;
+    va_list ap;
+    time(&rawtime);
+    localtime_r(&rawtime, &timeinfo);
+    strftime(t, 40, "%Y-%m-%d %H:%M:%S", &timeinfo);
+
+    fprintf(stdout, "%s [INFO] ", t);
+
+    va_start(ap, fmt);
+    vfprintf(stdout, fmt, ap);
+    va_end(ap);
+    fprintf(stdout, "\n");
+    fflush(stdout);
+}
+
+void signalHandler(int signal_number) {
+    logError("Got signal. Exiting", __func__);
+    // TODO: think there's an atomic variable meant to help with "signal caught" flags
+    pthread_mutex_lock(&runningMutex);
+    running = 0;
+    pthread_mutex_unlock(&runningMutex);
+    logInfo("Signaled");
+}
 
 
 static void* processingThread(void* arg) {
@@ -100,11 +160,18 @@ static void* processingThread(void* arg) {
     jpeg_mem_len_t jpeg_len_grayscale = 0;
     char filename[40];
 
+    // mjpeg stuff
+    const char *boundary = "--HATCHA\r\nContent-Type: image/jpeg\r\nContent-length: ";
+    int boundaryLength = strlen(boundary);
+    char contentLength[20];
+    int contentLengthLength;
+
     // yuv
     // https://stackoverflow.com/questions/16390783/how-to-compress-yuyv-raw-data-to-jpeg-using-libjpeg
     cinfo_yuv.err = jpeg_std_error(&jerr_yuv);
     jpeg_create_compress(&cinfo_yuv);
-    cinfo_yuv.image_width = settings->stride;
+    // using width here instead of stride to exclude the extra columns of pixels
+    cinfo_yuv.image_width = settings->width;
     cinfo_yuv.image_height = settings->height;
     cinfo_yuv.input_components = 3;
     cinfo_yuv.in_color_space = JCS_YCbCr;
@@ -117,8 +184,8 @@ static void* processingThread(void* arg) {
     // grayscale
     cinfo_grayscale.err = jpeg_std_error(&jerr_grayscale);
     jpeg_create_compress(&cinfo_grayscale);
-    // TODO: figure out how to exclude extra stride pixels
-    cinfo_grayscale.image_width = settings->stride;
+    // using width here instead of stride to exclude the extra columns of pixels
+    cinfo_grayscale.image_width = settings->width;
     cinfo_grayscale.image_height = settings->height;
     //cinfo_grayscale.num_components = 1;
     cinfo_grayscale.input_components = 3;
@@ -151,24 +218,25 @@ static void* processingThread(void* arg) {
     unsigned int frame_counter = 0;
 
     // TODO: the threshold variable names need a rethink
-    unsigned int mjpeg_delta = settings->fps; // * 60; // once a second
-    unsigned int mjpeg_threshold = mjpeg_delta;
-    unsigned int mjpeg_connections = 0;
+    unsigned int mjpeg_sleep = settings->fps / 10; // * 60; // once a second
+    unsigned int mjpeg_at = mjpeg_sleep;
+    unsigned int num_mjpeg_connections = 0;
 
     // BEGIN MOTION DETECTION STUFF
     uint8_t* previousFrame = (uint8_t*) malloc(settings->stride * settings->height);
     uint8_t* motionFrame = (uint8_t*) malloc(settings->stride * settings->height);
     // we'll push pixels with motion to 255, leave others at their regular values,
     // unsure whether this will help us visualize where motion took place
-    uint8_t* highlightedMotionFrame = (uint8_t*) malloc(settings->stride * settings->height);; // 
-    unsigned int detection_delta = settings->fps / 3;
-    unsigned int detection_threshold = detection_delta;
+    uint8_t* highlightedMotionFrame = (uint8_t*) malloc(settings->stride * settings->height);
+
+    unsigned int detection_sleep = settings->fps / 3;
+    unsigned int detection_at = detection_sleep;
 
     // number of pixels that must be changed to detect motion
-    unsigned int detected_pixels_threshold = settings->y_length * settings->percentage;
+    unsigned int changed_pixels_threshold = settings->y_length * settings->percentage_for_motion;
     // END MOTION DETECTION STUFF
 
-    printf("Pixel threshold %d\n", detected_pixels_threshold);
+    printf("Pixel threshold %d\n", changed_pixels_threshold);
 
     // Wait for first frame, and store it in previousFrame
     pthread_mutex_lock(&processingMutex);
@@ -210,6 +278,10 @@ static void* processingThread(void* arg) {
         processingQueue.pop_front(); // TODO: why both?
         pthread_mutex_unlock(&processingMutex);
 
+        pthread_mutex_lock(&requestsAtQueueMetricMutex);
+        requestsAtQueueMetric--;
+        pthread_mutex_unlock(&requestsAtQueueMetricMutex);
+
         // TODO: make this work with graceful shutdowns and HUPs
         if (request->status() == Request::RequestCancelled) {
             // skip?
@@ -226,23 +298,24 @@ static void* processingThread(void* arg) {
 
         frame_counter++;
 
+        // Get FrameBuffer for first stream
         const std::map<const Stream*, FrameBuffer*> &buffers2 = request->buffers();
         FrameBuffer* fb = buffers2.begin()->second;
 
         // do mjpeg compression?
         // only if we have connections
         // TODO: fix naming on these
-        pthread_mutex_lock(&connectionsMutex);
-        mjpeg_connections = mjpegConnections;
-        pthread_mutex_unlock(&connectionsMutex);
+        pthread_mutex_lock(&streamConnectionsMutex);
+        num_mjpeg_connections = streamConnections.size();
+        pthread_mutex_unlock(&streamConnectionsMutex);
 
         // TODO: how do we add timestamp into the frame?
 
         // is anyone trying to watch the stream?
-        if (mjpeg_connections > 0) {
-            if (frame_counter > mjpeg_threshold) {
+        if (num_mjpeg_connections > 0) {
+            if (frame_counter > mjpeg_at) {
                 // update threshold for when we should encode next mjpeg frame
-                mjpeg_threshold = frame_counter + mjpeg_delta;
+                mjpeg_at = frame_counter + mjpeg_sleep;
 
                 Y = mapped_buffers[ fb ][0];
                 U = mapped_buffers[ fb ][1];
@@ -276,13 +349,28 @@ static void* processingThread(void* arg) {
                 //printf("new len %lu\n", jpeg_len_yuv);
                 
                 auto ms_int = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start_time);
-                printf("Encode time %ldms\n", ms_int.count());
+                printf("    Stream Encode time %ldms\n", ms_int.count());
                 // TODO: would love to emit metrics to influx
+
+                // Stream to browsers
+                // prepare headers
+                contentLengthLength = snprintf(contentLength, 20, "%lu\r\n\r\n", jpeg_len_yuv);
+                pthread_mutex_lock(&streamConnectionsMutex);
+                auto end = streamConnections.end();
+                for (auto fd = streamConnections.begin(); fd != end; fd++) {
+                    send(*fd, boundary, boundaryLength, 0);
+                    send(*fd, contentLength, contentLengthLength, 0);
+                    send(*fd, jpeg_buffer_yuv, jpeg_len_yuv, 0);
+                }
+                pthread_mutex_unlock(&streamConnectionsMutex);
+
+                /*
 
                 snprintf(filename, 40, "/home/pi/stills/%d.jpeg", frame_counter);
                 fp = fopen(filename, "wb");
                 fwrite(jpeg_buffer_yuv, jpeg_len_yuv, 1, fp);
                 fclose(fp);
+                */
 
                 free(jpeg_buffer_yuv);
                 jpeg_buffer_yuv = NULL;
@@ -295,46 +383,76 @@ static void* processingThread(void* arg) {
         // SHOULD WE DO MOTION DETECTION FOR THIS FRAME?
         // let's try assuming the Y channel IS gray
         // TODO: speed this up with vector processing or SIMD
-        if (frame_counter > detection_threshold) {
-            detection_threshold = frame_counter + detection_delta;
+        if (frame_counter > detection_at) {
+            detection_at = frame_counter + detection_sleep;
             //printf("Checking frame for motion\n");
 
-            uint detected_pixels = 0;
+            uint changed_pixels = 0;
             uint compared_pixels = 0;
 
             auto start_time = std::chrono::high_resolution_clock::now();
 
             Y = mapped_buffers[ fb ][0];
-            /*
-            NOTE: copying pixels in bulk ahead of time, instead of using an else below
-            to copy unchanged pixels individually saves 20ms off
-            */
+            // NOTE: copying pixels in bulk ahead of time, instead of using an else below to copy unchanged pixels individually saves 20ms off
             // skipping motionFrame stuff altogether saves 2ms more
-            memcpy(motionFrame, Y, settings->y_length);
+            //memcpy(motionFrame, Y, settings->y_length);
+
+
             // TODO: only compare regions we care about, once that data is available
             // TODO: this takes 500ms to 1080p, not fast enough
-            for (int i = 0; i < settings->y_length; i++) {
-                // compare previous and current
-                int delta = abs(previousFrame[i] - Y[i]);
-                compared_pixels++;
-                if (delta > 35) {
-                    // highlight pixels that have changed
-                    motionFrame[i] = 255;
-                    detected_pixels++;
+            // 320ms without motionFrame writes
+            // 40ms for 640x480
+            bool simd = true;
+            if (!simd) {
+                for (int i = 0; i < settings->y_length; i++) {
+                    // compare previous and current
+                    int delta = abs(previousFrame[i] - Y[i]);
+                    compared_pixels++;
+                    if (delta > settings->pixel_delta_threshold) {
+                        // highlight pixels that have changed
+                        //motionFrame[i] = 255;
+                        changed_pixels++;
+                    }
+                }
+            
+            } else {
+                int batch = 16;
+                // constants
+                uint8x16_t _threshold = vdupq_n_u8(settings->pixel_delta_threshold);
+                uint8x16_t _one = vdupq_n_u8(1);
+
+                uint8x16_t _a, _b, _c;
+
+                uint8_t* current = Y;
+                uint8_t* current_max = current + settings->y_length;
+                uint8_t* previous = previousFrame;
+                uint8_t* previous_max = previous + settings->y_length;
+                uint8_t count = 0;
+
+                for (; current < current_max; current += batch, previous += batch) {
+                    _a = vld1q_u8(current);
+                    _b = vld1q_u8(previous);
+
+                    // subtraction then absolute value
+                    _c = vabdq_u8(_b, _a);
+                    // compare result against threshold
+                    _a = vcgtq_u8(_c, _threshold);
+                    // use bitmask from compare to set 1s in matching elements
+                    _b = vandq_u8(_a, _one);
+                    // increment counter - this overflows!
+                    //_count = vaddq_u8(_count, _b);
+                    // sum and get result out
+                    changed_pixels += vaddvq_u8(_b);
                 }
             }
 
+
             auto ms_int = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start_time);
 
-            if (detected_pixels > detected_pixels_threshold) {
+            if (changed_pixels > changed_pixels_threshold) {
                 // motion was detected!
-                printf("Time: %ldms Compared pixels: %d Changed pixels: %d MOTION DETECTED\n", ms_int.count(), compared_pixels, detected_pixels);
-
-                // swap previousFrame pointer for next time
                 memcpy(previousFrame, Y, settings->y_length);
 
-                // need to push to thread
-                Y = motionFrame;
                 Y_max = (Y + settings->y_length) - settings->stride;
 
                 // use a fresh jpeg_buffer each iteration to avoid OOM:
@@ -352,21 +470,42 @@ static void* processingThread(void* arg) {
                     jpeg_write_raw_data(&cinfo_grayscale, grayscale_rows, 16);
                 }
                 jpeg_finish_compress(&cinfo_grayscale);
+
+                // Stream to browsers
+                // prepare headers
+                contentLengthLength = snprintf(contentLength, 20, "%lu\r\n\r\n", jpeg_len_grayscale);
+                pthread_mutex_lock(&motionConnectionsMutex);
+                auto end = motionConnections.end();
+                for (auto fd = motionConnections.begin(); fd != end; fd++) {
+                    send(*fd, boundary, boundaryLength, 0);
+                    send(*fd, contentLength, contentLengthLength, 0);
+                    send(*fd, jpeg_buffer_grayscale, jpeg_len_grayscale, 0);
+                }
+                pthread_mutex_unlock(&motionConnectionsMutex);
                 
+                /*
                 snprintf(filename, 40, "/home/pi/stills/motion_%d.jpeg", frame_counter);
                 fp = fopen(filename, "wb");
                 fwrite(jpeg_buffer_grayscale, jpeg_len_grayscale, 1, fp);
                 fclose(fp);
+                */
 
                 free(jpeg_buffer_grayscale);
                 jpeg_buffer_grayscale = NULL;
+
+                printf("  Detection Time: %ldms Changed pixels: %d MOTION DETECTED\n", ms_int.count(), changed_pixels);
+
             } else {
-                printf("Time: %ldms Compared pixels: %d Changed pixels: %d\n", ms_int.count(), compared_pixels, detected_pixels);
+                printf("  Detection Time: %ldms Changed pixels: %d\n", ms_int.count(), changed_pixels);
             }
         }
 
         request->reuse(Request::ReuseBuffers);
         camera->queueRequest(request);
+
+        pthread_mutex_lock(&requestsAtCameraMetricMutex);
+        requestsAtCameraMetric++;
+        pthread_mutex_unlock(&requestsAtCameraMetricMutex);
     }
     //jpeg_destroy_compress(&cinfo_yuv);
     jpeg_destroy_compress(&cinfo_grayscale);
@@ -395,14 +534,232 @@ static void requestComplete(Request *request)
 
     // TODO: can we add a timestamp into the frame here?
 
+    pthread_mutex_lock(&requestsAtCameraMetricMutex);
+    requestsAtCameraMetric--;
+    pthread_mutex_unlock(&requestsAtCameraMetricMutex);
+
     pthread_mutex_lock(&processingMutex);
     processingQueue.push_back(request);
     pthread_cond_signal(&processingCondition);
     pthread_mutex_unlock(&processingMutex);
+
+    pthread_mutex_lock(&requestsAtQueueMetricMutex);
+    requestsAtQueueMetric++;
+    pthread_mutex_unlock(&requestsAtQueueMetricMutex);
+}
+
+
+
+// HTTP SERVER STUFF
+static int httpServerCleanupArg = 0;
+static void httpServerThreadCleanup(void *arg) {
+    pthread_mutex_unlock(&runningMutex);
+
+    logInfo("HTTP Server thread closing down");
+    for (int i = 0; i < http_fds_count; i++) {
+        printf("Closing %d\n", http_fds[i].fd);
+        close(http_fds[i].fd);
+    }
+
+    pthread_mutex_lock(&streamConnectionsMutex);
+    streamConnections.clear();
+    pthread_mutex_unlock(&streamConnectionsMutex);
+}
+
+static void *httpServerThread(void*) {
+    bool r;
+    int status;
+    int ret;
+
+    int port = 8080;
+    int listener, socketfd;
+    int length;
+    static struct sockaddr_in cli_addr; /* static = initialised to zeros */
+    static struct sockaddr_in serv_addr; /* static = initialised to zeros */
+    int request_length = 8192;
+    char request[8192];
+    char response_header[128];
+    int response_header_length;
+    char response1[1024], response2[1024]; // for index.html
+    int response1_length, response2_length;
+    int i;
+    int yes = 1;
+
+    pthread_cleanup_push(httpServerThreadCleanup, NULL);
+
+    response_header_length = snprintf(response_header, 128, "HTTP/1.1 200 OK\r\nConnection: Keep-Alive\r\nContent-Type: multipart/x-mixed-replace; boundary=HATCHA\r\n\r\n");
+
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    serv_addr.sin_port = htons(port);
+
+    //logInfo("Opening socket");
+    listener = socket(AF_INET, SOCK_STREAM, 0);
+    if (listener < 0) {
+        fprintf(stdout, "Failed to create server socket: %d\n", listener);
+        //logError("Failed to create listening socket", __func__);
+        pthread_exit(NULL);
+    }
+
+    // REUSEADDR so socket is available again immediately after close()
+    setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
+
+    logInfo("Binding");
+    status = bind(listener, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
+    if (status < 0) {
+        fprintf(stdout, "Failed to bind: %d\n", errno);
+        logError("Failed to bind", __func__);
+        close(listener);
+        pthread_exit(NULL);
+    }
+
+    logInfo("Listening");
+    status = listen(listener, SOMAXCONN);
+    if (status < 0) {
+        fprintf(stdout, "Failed to listen: %d\n", status);
+        close(listener);
+        pthread_exit(NULL);
+    }
+    logInfo("here");
+    length = sizeof(cli_addr);
+
+    // add listener to poll fds
+    http_fds[0].fd = listener;
+    http_fds[0].events = POLLIN;
+    http_fds_count++;
+
+    logInfo("here 1");
+    pthread_mutex_lock(&runningMutex);
+    r = running;
+    pthread_mutex_unlock(&runningMutex);
+    while (r) {
+        // this blocks, which is what we want
+        ret = poll(http_fds, http_fds_count, -1);
+        if (ret < 1) {
+            // thread cancelled or other?
+            // TODO: handle this
+            printf("poll returned <1 %d\n", ret);
+        }
+
+        for (int i = 0; i < http_fds_count; ) {
+            if (!(http_fds[i].revents & POLLIN)) {
+                i++;
+                continue;
+            }
+
+            if (i > 0) {
+                // TODO: we may not receive all the data at once, hmmm                    
+                int bytes = recv(http_fds[i].fd, request, request_length, 0);
+                if (bytes > 0) {
+                    request[bytes] = 0;
+                    // parse and handle GET request
+                    fprintf(stdout, "[INFO] Got request: %s\n", request);
+
+                    // TODO: can we cleanup this in some way?
+                    
+                    if (strncmp(request, "GET / HTTP", 10) == 0) {
+                        logInfo("here3\n");
+                        // write index.html
+                        FILE* f = fopen("public/index.html", "r");
+                        response2_length = fread(response2, 1, 1024, f);
+                        fclose(f);
+
+                        // note the Connection:close header to prevent keep-alive
+                        response1_length = snprintf(response1, 1024, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", response2_length);
+                        ret = write(http_fds[i].fd, response1, response1_length);
+                        ret += write(http_fds[i].fd, response2, response2_length);
+                        
+                        pthread_mutex_lock(&runningMutex);
+                        r = running;
+                        pthread_mutex_unlock(&runningMutex);
+
+                    } else if (strncmp(request, "GET /stream.mjpeg HTTP", 22) == 0) {
+                        ret = write(http_fds[i].fd, response_header, response_header_length);
+
+                        pthread_mutex_lock(&streamConnectionsMutex);
+                        streamConnections.push_back(http_fds[i].fd);
+                        pthread_mutex_unlock(&streamConnectionsMutex);
+
+                    } else if (strncmp(request, "GET /motion.mjpeg HTTP", 22) == 0) {
+                        // send motion pixels as mjpeg
+                        ret = write(http_fds[i].fd, response_header, response_header_length);
+
+                        pthread_mutex_lock(&streamConnectionsMutex);
+                        motionConnections.push_back(http_fds[i].fd);
+                        pthread_mutex_unlock(&streamConnectionsMutex);
+
+                    } else {
+                        // request for something we don't handle
+                        response1_length = snprintf(response1, 1024, "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: 9\r\nConnection: close\r\n\r\nNot found");
+                        ret = write(http_fds[i].fd, response1, response1_length);
+                    }
+                    
+                    // Send prelim headers
+                    if (ret < 1) {
+                        logInfo("Failed to write");
+                        close(http_fds[i].fd);
+                    }
+
+                    i++;
+                } else {
+                    // Receive returned 0. Socket has been closed.
+                    pthread_mutex_lock(&streamConnectionsMutex);
+                    // remove from mjpeg streaming list
+                    streamConnections.remove( http_fds[i].fd );
+                    pthread_mutex_unlock(&streamConnectionsMutex);
+
+                    pthread_mutex_lock(&motionConnectionsMutex);
+                    motionConnections.remove( http_fds[i].fd );
+                    pthread_mutex_unlock(&motionConnectionsMutex);
+
+                    printf("Closing %d\n", http_fds[i].fd);
+                    close(http_fds[i].fd);
+
+                    http_fds[i] = http_fds[http_fds_count - 1];
+                    http_fds_count--;
+                    // process the same slot again, which has a new file descriptor
+                    // don't increment i
+                }
+            } else {
+                socketfd = accept(listener, NULL, 0); //, (struct sockaddr *)&cli_addr, &length);
+                if (http_fds_count < MAX_POLL_FDS) {
+                    if (socketfd < 0) {
+                        fprintf(stdout, "Failed to accept: %d\n", errno);
+                        pthread_mutex_lock(&runningMutex);
+                        r = running;
+                        pthread_mutex_unlock(&runningMutex);
+                        // TODO: think we should break if accept fails
+                        // and perhaps re-listen?
+                        break;
+                    }
+                    printf("Accepted: %d\n", socketfd);
+
+                    http_fds[http_fds_count].fd = socketfd;
+                    http_fds[http_fds_count].events = POLLIN;
+                    http_fds_count++;
+                } else {
+                    printf("CANNOT ACCEPT CONNECTION, CLOSING\n");
+                    close(socketfd);
+                }
+
+                // move on to next item in fds
+                i++;
+            }
+        }
+
+        pthread_mutex_lock(&runningMutex);
+        r = running;
+        pthread_mutex_unlock(&runningMutex);
+    }
+
+    pthread_cleanup_pop(httpServerCleanupArg);
+    return NULL;
 }
 
 int main()
 {
+    signal(SIGINT, signalHandler);
+
     settings.width = width;
     settings.height = height;
     settings.stride = width;
@@ -412,6 +769,13 @@ int main()
     void* processingThreadStatus;
     pthread_mutex_init(&processingMutex, NULL);
     pthread_cond_init(&processingCondition, NULL);
+
+    pthread_t httpServerThreadId;
+    void* httpServerThreadStatus;
+    pthread_mutex_init(&streamConnectionsMutex, NULL);
+
+    pthread_mutex_init(&requestsAtCameraMetricMutex, NULL);
+    pthread_mutex_init(&requestsAtQueueMetricMutex, NULL);
     
 
     std::unique_ptr<CameraManager> cm = std::make_unique<CameraManager>();
@@ -544,30 +908,74 @@ int main()
     controls.set(libcamera::controls::FrameDurationLimits, { frame_time, frame_time });
 
     camera->start(&controls);
-    for (auto &request : requests)
-       camera->queueRequest(request.get());
+    for (auto &request : requests) {
+        camera->queueRequest(request.get());
+        pthread_mutex_lock(&requestsAtCameraMetricMutex);
+        requestsAtCameraMetric++;
+        pthread_mutex_unlock(&requestsAtCameraMetricMutex);
+
+    }
 
     // start thread
     pthread_create(&processingThreadId, NULL, processingThread, (void*)&settings);
+    pthread_create(&httpServerThreadId, NULL, httpServerThread, (void*)&settings);
 
     //60 * 60 * 24 * 7; // days
     int duration = 60;
     duration = 3600 * 24; // 12 hours
-    duration = 3600 * 2;
+    duration = 3600 * 6;
 
-    for (int i = 0; i < duration; i++) {
+    //for (int i = 0; i < duration; i++) {
+    int r = 1;
+    while (r) {
         //std::cout << "Sleeping" << std::endl;
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
+        int requestsAtCameraMet = 0;
+        int requestsAtQueueMet = 0;
+
+        int streamConns = 0;
+        int motionConns = 0;
+
+        pthread_mutex_lock(&requestsAtCameraMetricMutex);
+        requestsAtCameraMet = requestsAtCameraMetric;
+        pthread_mutex_unlock(&requestsAtCameraMetricMutex);
+
+        pthread_mutex_lock(&requestsAtQueueMetricMutex);
+        requestsAtQueueMet = requestsAtQueueMetric;
+        pthread_mutex_unlock(&requestsAtQueueMetricMutex);
+
+        pthread_mutex_lock(&streamConnectionsMutex);
+        streamConns = streamConnections.size();
+        pthread_mutex_unlock(&streamConnectionsMutex);
+
+        pthread_mutex_lock(&motionConnectionsMutex);
+        motionConns = motionConnections.size();
+        pthread_mutex_unlock(&motionConnectionsMutex);
+
+        printf(
+            "Req@Camera: %d Req@Queue: %d Stream conns: %d Motion conns %d\n",
+            requestsAtCameraMet,
+            requestsAtQueueMet,
+            streamConns,
+            motionConns
+        );
+
+        pthread_mutex_lock(&runningMutex);
+        r = running;
+        pthread_mutex_unlock(&runningMutex);
     }
 
     running = 0;
     pthread_cancel(processingThreadId);
+    pthread_cancel(httpServerThreadId);
     // figure out how to cancel this thread properly
     pthread_mutex_lock(&processingMutex);
     pthread_cond_signal(&processingCondition);
     pthread_mutex_unlock(&processingMutex);
 
     pthread_join(processingThreadId, &processingThreadStatus);
+    pthread_join(httpServerThreadId, &httpServerThreadStatus);
 
     camera->stop();
     allocator->free(stream);
