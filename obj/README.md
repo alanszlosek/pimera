@@ -1,0 +1,1 @@
+for now, .o (object files) are stored here

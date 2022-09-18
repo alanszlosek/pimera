@@ -24,6 +24,9 @@ typedef size_t jpeg_mem_len_t;
 typedef unsigned long jpeg_mem_len_t;
 #endif
 
+//#include "encoder.hpp"
+#include "annotate.hpp"
+
 using namespace libcamera;
 
 static std::shared_ptr<Camera> camera;
@@ -66,18 +69,28 @@ int height = 922;
 int fps = 20;
 
 typedef struct PiMeraSettings {
-    unsigned int width;
-    unsigned int height;
-    unsigned int stride;
-    unsigned int fps;
-    unsigned int mjpeg_quality = 90;
+    struct {
+        unsigned int width;
+        unsigned int height;
+        unsigned int stride;
+        unsigned int fps;
+        size_t y_length;
+        size_t uv_length;
+    } h264;
+
+    struct {
+        unsigned int width;
+        unsigned int height;
+        unsigned int stride;
+        unsigned int quality = 90;
+        // TODO: pre-calculate these in main for YUV plane buffers
+        size_t y_length;
+        size_t uv_length;
+    } mjpeg;
     // if this percentage of pixels change, motion is detected
     float percentage_for_motion = 0.05;
     uint8_t pixel_delta_threshold = 50;
 
-    // TODO: pre-calculate these in main for YUV plane buffers
-    size_t y_length;
-    size_t uv_length;
 
 } PiMeraSettings;
 
@@ -131,7 +144,7 @@ static void* processingThread(void* arg) {
 
     // BEGIN JPEG STUFF
     // set up jpeg stuff once
-    int stride2 = settings->stride / 2;
+    int stride2 = settings->h264.stride / 2;
     uint8_t *Y;
     uint8_t *U;
     uint8_t *V;
@@ -171,22 +184,22 @@ static void* processingThread(void* arg) {
     cinfo_yuv.err = jpeg_std_error(&jerr_yuv);
     jpeg_create_compress(&cinfo_yuv);
     // using width here instead of stride to exclude the extra columns of pixels
-    cinfo_yuv.image_width = settings->width;
-    cinfo_yuv.image_height = settings->height;
+    cinfo_yuv.image_width = settings->h264.width;
+    cinfo_yuv.image_height = settings->h264.height;
     cinfo_yuv.input_components = 3;
     cinfo_yuv.in_color_space = JCS_YCbCr;
     cinfo_yuv.jpeg_color_space = cinfo_yuv.in_color_space;
     cinfo_yuv.restart_interval = 0;
     jpeg_set_defaults(&cinfo_yuv);
     cinfo_yuv.raw_data_in = TRUE;
-    jpeg_set_quality(&cinfo_yuv, settings->mjpeg_quality, TRUE);
+    jpeg_set_quality(&cinfo_yuv, settings->mjpeg.quality, TRUE);
 
     // grayscale
     cinfo_grayscale.err = jpeg_std_error(&jerr_grayscale);
     jpeg_create_compress(&cinfo_grayscale);
     // using width here instead of stride to exclude the extra columns of pixels
-    cinfo_grayscale.image_width = settings->width;
-    cinfo_grayscale.image_height = settings->height;
+    cinfo_grayscale.image_width = settings->h264.width;
+    cinfo_grayscale.image_height = settings->h264.height;
     //cinfo_grayscale.num_components = 1;
     cinfo_grayscale.input_components = 3;
     cinfo_grayscale.in_color_space = JCS_YCbCr;
@@ -195,7 +208,7 @@ static void* processingThread(void* arg) {
     jpeg_set_defaults(&cinfo_grayscale);
     // since can't get grayscale color space to work, prepare array of uv data to simulate grayscale from Y plane data
     // prepare 8 rows of data, maybe?
-    int uv_length = (settings->stride * 8) / 2;
+    int uv_length = (settings->h264.stride * 8) / 2;
     uv_data = (uint8_t*) malloc(uv_length);
     memset(uv_data, 128, uv_length);
     // prepare grayscale_uv_rows pointers
@@ -209,7 +222,7 @@ static void* processingThread(void* arg) {
 
     // raw lets us do detection with compression in around 60ms, otherwise 250ms
     cinfo_grayscale.raw_data_in = TRUE;
-    jpeg_set_quality(&cinfo_grayscale, settings->mjpeg_quality, TRUE);
+    jpeg_set_quality(&cinfo_grayscale, settings->mjpeg.quality, TRUE);
     
 
     // END JPEG STUFF
@@ -218,22 +231,22 @@ static void* processingThread(void* arg) {
     unsigned int frame_counter = 0;
 
     // TODO: the threshold variable names need a rethink
-    unsigned int mjpeg_sleep = settings->fps / 10; // * 60; // once a second
+    unsigned int mjpeg_sleep = settings->h264.fps / 10; // * 60; // once a second
     unsigned int mjpeg_at = mjpeg_sleep;
     unsigned int num_mjpeg_connections = 0;
 
     // BEGIN MOTION DETECTION STUFF
-    uint8_t* previousFrame = (uint8_t*) malloc(settings->stride * settings->height);
-    uint8_t* motionFrame = (uint8_t*) malloc(settings->stride * settings->height);
+    uint8_t* previousFrame = (uint8_t*) malloc(settings->h264.stride * settings->h264.height);
+    uint8_t* motionFrame = (uint8_t*) malloc(settings->h264.stride * settings->h264.height);
     // we'll push pixels with motion to 255, leave others at their regular values,
     // unsure whether this will help us visualize where motion took place
-    uint8_t* highlightedMotionFrame = (uint8_t*) malloc(settings->stride * settings->height);
+    uint8_t* highlightedMotionFrame = (uint8_t*) malloc(settings->h264.stride * settings->h264.height);
 
-    unsigned int detection_sleep = settings->fps / 3;
+    unsigned int detection_sleep = settings->h264.fps / 3;
     unsigned int detection_at = detection_sleep;
 
     // number of pixels that must be changed to detect motion
-    unsigned int changed_pixels_threshold = settings->y_length * settings->percentage_for_motion;
+    unsigned int changed_pixels_threshold = settings->h264.y_length * settings->percentage_for_motion;
     // END MOTION DETECTION STUFF
 
     printf("Pixel threshold %d\n", changed_pixels_threshold);
@@ -252,14 +265,14 @@ static void* processingThread(void* arg) {
     FrameBuffer* fb = buffers.begin()->second;
     Y = mapped_buffers[ fb ][0];
     // TODO: only copy regions we care about, once that data is available
-    for (int i = 0; i < (settings->stride * settings->height); i++) {
+    for (int i = 0; i < (settings->h264.stride * settings->h264.height); i++) {
         previousFrame[i] = Y[i];
     }
 
     // for testing grayscale
     /*
-    for (int y = 0, i = 0; y < settings->height; y++) {
-        for (int x = 0; x < settings->width; x++, i++) {
+    for (int y = 0, i = 0; y < settings->h264.height; y++) {
+        for (int x = 0; x < settings->h264.width; x++, i++) {
             if (x > 255) {
                 motionFrame[i] = 255;
             } else {
@@ -320,9 +333,15 @@ static void* processingThread(void* arg) {
                 Y = mapped_buffers[ fb ][0];
                 U = mapped_buffers[ fb ][1];
                 V = mapped_buffers[ fb ][2];
-                Y_max = (Y + settings->y_length) - settings->stride;
-                U_max = (U + settings->uv_length) - stride2;
-                V_max = (V + settings->uv_length) - stride2;
+                Y_max = (Y + settings->h264.y_length) - settings->h264.stride;
+                U_max = (U + settings->h264.uv_length) - stride2;
+                V_max = (V + settings->h264.uv_length) - stride2;
+
+                char timestamp[40];
+                time_t now = time(NULL);
+                struct tm *t = localtime(&now);
+                strftime(timestamp, 39, "%Y-%m-%d %H:%M:%S", t);
+                annotate(timestamp, strlen(timestamp), Y, 10 + (10 * settings->h264.stride), settings->h264.stride);
 
                 auto start_time = std::chrono::high_resolution_clock::now();
                 // use a fresh jpeg_buffer each iteration to avoid OOM:
@@ -331,9 +350,9 @@ static void* processingThread(void* arg) {
                 // this takes 80-130ms, longer than frame at 10fps
                 jpeg_start_compress(&cinfo_yuv, TRUE);
 
-                for (uint8_t *Y_row = Y, *U_row = U, *V_row = V; cinfo_yuv.next_scanline < settings->height;)
+                for (uint8_t *Y_row = Y, *U_row = U, *V_row = V; cinfo_yuv.next_scanline < settings->h264.height;)
                 {
-                    for (int i = 0; i < 16; i++, Y_row += settings->stride) {
+                    for (int i = 0; i < 16; i++, Y_row += settings->h264.stride) {
                         y_rows[i] = std::min(Y_row, Y_max);
                     }
                     for (int i = 0; i < 8; i++, U_row += stride2, V_row += stride2) {
@@ -404,7 +423,7 @@ static void* processingThread(void* arg) {
             // 40ms for 640x480
             bool simd = true;
             if (!simd) {
-                for (int i = 0; i < settings->y_length; i++) {
+                for (int i = 0; i < settings->h264.y_length; i++) {
                     // compare previous and current
                     int delta = abs(previousFrame[i] - Y[i]);
                     compared_pixels++;
@@ -424,9 +443,9 @@ static void* processingThread(void* arg) {
                 uint8x16_t _a, _b, _c;
 
                 uint8_t* current = Y;
-                uint8_t* current_max = current + settings->y_length;
+                uint8_t* current_max = current + settings->h264.y_length;
                 uint8_t* previous = previousFrame;
-                uint8_t* previous_max = previous + settings->y_length;
+                uint8_t* previous_max = previous + settings->h264.y_length;
                 uint8_t count = 0;
 
                 for (; current < current_max; current += batch, previous += batch) {
@@ -451,9 +470,9 @@ static void* processingThread(void* arg) {
 
             if (changed_pixels > changed_pixels_threshold) {
                 // motion was detected!
-                memcpy(previousFrame, Y, settings->y_length);
+                memcpy(previousFrame, Y, settings->h264.y_length);
 
-                Y_max = (Y + settings->y_length) - settings->stride;
+                Y_max = (Y + settings->h264.y_length) - settings->h264.stride;
 
                 // use a fresh jpeg_buffer each iteration to avoid OOM:
                 // https://github.com/libjpeg-turbo/libjpeg-turbo/issues/610
@@ -461,9 +480,9 @@ static void* processingThread(void* arg) {
                 // this takes 80-130ms, longer than frame at 10fps
                 jpeg_start_compress(&cinfo_grayscale, TRUE);
 
-                for (uint8_t *Y_row = Y; cinfo_grayscale.next_scanline < settings->height;)
+                for (uint8_t *Y_row = Y; cinfo_grayscale.next_scanline < settings->h264.height;)
                 {
-                    for (int i = 0; i < 16; i++, Y_row += settings->stride) {
+                    for (int i = 0; i < 16; i++, Y_row += settings->h264.stride) {
                         y_rows[i] = std::min(Y_row, Y_max);
                     }
 
@@ -587,7 +606,7 @@ static void *httpServerThread(void*) {
 
     pthread_cleanup_push(httpServerThreadCleanup, NULL);
 
-    response_header_length = snprintf(response_header, 128, "HTTP/1.1 200 OK\r\nConnection: Keep-Alive\r\nContent-Type: multipart/x-mixed-replace; boundary=HATCHA\r\n\r\n");
+    response_header_length = snprintf(response_header, 128, "HTTP/1.1 200 OK\r\nConnection: Keep-Alive\r\nCache-Control: no-store\r\nContent-Type: multipart/x-mixed-replace; boundary=HATCHA\r\n\r\n");
 
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -665,7 +684,7 @@ static void *httpServerThread(void*) {
                         fclose(f);
 
                         // note the Connection:close header to prevent keep-alive
-                        response1_length = snprintf(response1, 1024, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", response2_length);
+                        response1_length = snprintf(response1, 1024, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n", response2_length);
                         ret = write(http_fds[i].fd, response1, response1_length);
                         ret += write(http_fds[i].fd, response2, response2_length);
                         
@@ -760,10 +779,14 @@ int main()
 {
     signal(SIGINT, signalHandler);
 
-    settings.width = width;
-    settings.height = height;
-    settings.stride = width;
-    settings.fps = fps;
+    settings.h264.width = width;
+    settings.h264.height = height;
+    settings.h264.stride = width;
+    settings.h264.fps = fps;
+    settings.mjpeg.width = 640;
+    settings.mjpeg.height = 480;
+    settings.mjpeg.stride = 640;
+    settings.mjpeg.quality = 90;
 
     pthread_t processingThreadId;
     void* processingThreadStatus;
@@ -794,20 +817,27 @@ int main()
     camera->acquire();
 
     // VideoRecording
-    std::unique_ptr<CameraConfiguration> config = camera->generateConfiguration( { StreamRole::VideoRecording } );
+    std::unique_ptr<CameraConfiguration> config = camera->generateConfiguration( { StreamRole::VideoRecording }); //, StreamRole::VideoRecording } );
+    // Full resolution for h264
     StreamConfiguration &streamConfig = config->at(0);
-
-    //streamConfig.pixelFormat = libcamera::formats::RGB888;
     streamConfig.pixelFormat = libcamera::formats::YUV420;
     streamConfig.colorSpace = libcamera::ColorSpace::Jpeg; // TODO: is this necessary?
-
-    streamConfig.size.width = width;
-    streamConfig.size.height = height;
+    streamConfig.size.width = settings.h264.width;
+    streamConfig.size.height = settings.h264.height;
     // This seems to default to 4, but we want to queue buffers for post
     // processing, so we need to raise it.
-    // 10 works ... oddly, but 20 fails behind the scenes. doesn't apear
-    // to be an error we can catch
+    // 10 works but 20 fails and isn't an error we can catch
     streamConfig.bufferCount = 10;
+
+    /*
+    // smaller for MJPEG
+    streamConfig = config->at(1);
+    streamConfig.pixelFormat = libcamera::formats::YUV420;
+    streamConfig.colorSpace = libcamera::ColorSpace::Jpeg;
+    streamConfig.size.width = settings.mjpeg.width;
+    streamConfig.size.height = settings.mjpeg.height;
+    streamConfig.bufferCount = 10;
+    */
 
     CameraConfiguration::Status status = config->validate();
     if (status == CameraConfiguration::Invalid) {
@@ -818,15 +848,24 @@ int main()
     // Configuration might have set an unexpected stride, use it.
     // Think YUV420 needs 64bit alignment according to:
     // https://github.com/raspberrypi/picamera2/blob/main/picamera2/configuration.py
-    settings.stride = streamConfig.stride;
-    printf("Stride after configuring: %d\n", streamConfig.stride);
-    printf("Color space: %s\n", streamConfig.colorSpace->toString().c_str());
-    settings.y_length = settings.stride * settings.height;
-    settings.uv_length = settings.y_length / 4; // I think this is the right size
+    //streamConfig = config->at(0);
+    settings.h264.stride = streamConfig.stride;
+    printf("H264 Stride after configuring: %d\n", streamConfig.stride);
+    settings.h264.y_length = settings.h264.stride * settings.h264.height;
+    settings.h264.uv_length = settings.h264.y_length / 4; // I think this is the right size
+
+    /*
+    streamConfig = config->at(1);
+    settings.mjpeg.stride = streamConfig.stride;
+    printf("MJPEG Stride after configuring: %d\n", streamConfig.stride);
+    settings.mjpeg.y_length = settings.mjpeg.stride * settings.mjpeg.height;
+    settings.mjpeg.uv_length = settings.mjpeg.y_length / 4; // I think this is the right size
+    */
 
     camera->configure(config.get());
 
     FrameBufferAllocator *allocator = new FrameBufferAllocator(camera);
+
 
     for (StreamConfiguration &cfg : *config) {
         // TODO: it's possible we'll need our own allocator for raspi,
