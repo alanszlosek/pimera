@@ -4,7 +4,7 @@
 #define letter_height 7
 #define letter_length 5*7
 
-uint8_t scale = 4;
+uint8_t scale = 2;
 
 
 
@@ -279,7 +279,7 @@ void _annotate(uint8_t* letter, uint8_t* buffer, int startIndex, int stride) {
                 uint8_t* letter_cell = letter_row + col;
                 if (*letter_cell) {
                     for (int s2 = 0; s2 < scale; s2++) {
-                        *buffer_cell = 255;
+                        *buffer_cell = 0;
                         buffer_cell++;
                     }
                 } else {
@@ -308,12 +308,13 @@ void _annotate(uint8_t* letter, uint8_t* buffer, int startIndex, int stride) {
 
 void annotate(char* text, int text_length, uint8_t* buffer, int startIndex, int stride) {
     int index = startIndex;
+    int gap = 5;
     for (int i = 0; i < text_length; i++) {
         if (' ' <= text[i] && text[i] <= ':') {
             int val = text[i] - 32;
             _annotate(letters[val], buffer, index, stride);
         }
         // gap
-        index += (letter_width * scale) + 10;
+        index += (letter_width * scale) + gap;
     }
 }

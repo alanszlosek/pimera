@@ -35,7 +35,8 @@ static std::shared_ptr<Camera> camera;
 // we can pre-calculate length of each YUV data buffer in main
 // and store in settings
 std::map<FrameBuffer *, std::vector<uint8_t*>> mapped_buffers;
-
+Stream* h264Stream;
+Stream* mjpegStream;
 
 pthread_mutex_t processingMutex;
 pthread_cond_t processingCondition;
@@ -59,14 +60,6 @@ pthread_mutex_t requestsAtQueueMetricMutex;
 int requestsAtCameraMetric = 0;
 int requestsAtQueueMetric = 0;
 
-
-//int width = 1640;
-//int height = 922;
-// 1920 1080
-// 640 480
-int width = 1640;
-int height = 922;
-int fps = 20;
 
 typedef struct PiMeraSettings {
     struct {
@@ -144,7 +137,7 @@ static void* processingThread(void* arg) {
 
     // BEGIN JPEG STUFF
     // set up jpeg stuff once
-    int stride2 = settings->h264.stride / 2;
+    int stride2 = settings->mjpeg.stride / 2;
     uint8_t *Y;
     uint8_t *U;
     uint8_t *V;
@@ -184,8 +177,8 @@ static void* processingThread(void* arg) {
     cinfo_yuv.err = jpeg_std_error(&jerr_yuv);
     jpeg_create_compress(&cinfo_yuv);
     // using width here instead of stride to exclude the extra columns of pixels
-    cinfo_yuv.image_width = settings->h264.width;
-    cinfo_yuv.image_height = settings->h264.height;
+    cinfo_yuv.image_width = settings->mjpeg.width;
+    cinfo_yuv.image_height = settings->mjpeg.height;
     cinfo_yuv.input_components = 3;
     cinfo_yuv.in_color_space = JCS_YCbCr;
     cinfo_yuv.jpeg_color_space = cinfo_yuv.in_color_space;
@@ -198,8 +191,8 @@ static void* processingThread(void* arg) {
     cinfo_grayscale.err = jpeg_std_error(&jerr_grayscale);
     jpeg_create_compress(&cinfo_grayscale);
     // using width here instead of stride to exclude the extra columns of pixels
-    cinfo_grayscale.image_width = settings->h264.width;
-    cinfo_grayscale.image_height = settings->h264.height;
+    cinfo_grayscale.image_width = settings->mjpeg.width;
+    cinfo_grayscale.image_height = settings->mjpeg.height;
     //cinfo_grayscale.num_components = 1;
     cinfo_grayscale.input_components = 3;
     cinfo_grayscale.in_color_space = JCS_YCbCr;
@@ -208,7 +201,7 @@ static void* processingThread(void* arg) {
     jpeg_set_defaults(&cinfo_grayscale);
     // since can't get grayscale color space to work, prepare array of uv data to simulate grayscale from Y plane data
     // prepare 8 rows of data, maybe?
-    int uv_length = (settings->h264.stride * 8) / 2;
+    int uv_length = (settings->mjpeg.stride * 8) / 2;
     uv_data = (uint8_t*) malloc(uv_length);
     memset(uv_data, 128, uv_length);
     // prepare grayscale_uv_rows pointers
@@ -236,17 +229,17 @@ static void* processingThread(void* arg) {
     unsigned int num_mjpeg_connections = 0;
 
     // BEGIN MOTION DETECTION STUFF
-    uint8_t* previousFrame = (uint8_t*) malloc(settings->h264.stride * settings->h264.height);
-    uint8_t* motionFrame = (uint8_t*) malloc(settings->h264.stride * settings->h264.height);
+    uint8_t* previousFrame = (uint8_t*) malloc(settings->mjpeg.stride * settings->mjpeg.height);
+    uint8_t* motionFrame = (uint8_t*) malloc(settings->mjpeg.stride * settings->mjpeg.height);
     // we'll push pixels with motion to 255, leave others at their regular values,
     // unsure whether this will help us visualize where motion took place
-    uint8_t* highlightedMotionFrame = (uint8_t*) malloc(settings->h264.stride * settings->h264.height);
+    uint8_t* highlightedMotionFrame = (uint8_t*) malloc(settings->mjpeg.stride * settings->mjpeg.height);
 
     unsigned int detection_sleep = settings->h264.fps / 3;
     unsigned int detection_at = detection_sleep;
 
     // number of pixels that must be changed to detect motion
-    unsigned int changed_pixels_threshold = settings->h264.y_length * settings->percentage_for_motion;
+    unsigned int changed_pixels_threshold = settings->mjpeg.y_length * settings->percentage_for_motion;
     // END MOTION DETECTION STUFF
 
     printf("Pixel threshold %d\n", changed_pixels_threshold);
@@ -265,14 +258,14 @@ static void* processingThread(void* arg) {
     FrameBuffer* fb = buffers.begin()->second;
     Y = mapped_buffers[ fb ][0];
     // TODO: only copy regions we care about, once that data is available
-    for (int i = 0; i < (settings->h264.stride * settings->h264.height); i++) {
+    for (int i = 0; i < (settings->mjpeg.stride * settings->mjpeg.height); i++) {
         previousFrame[i] = Y[i];
     }
 
     // for testing grayscale
     /*
-    for (int y = 0, i = 0; y < settings->h264.height; y++) {
-        for (int x = 0; x < settings->h264.width; x++, i++) {
+    for (int y = 0, i = 0; y < settings->mjpeg.height; y++) {
+        for (int x = 0; x < settings->mjpeg.width; x++, i++) {
             if (x > 255) {
                 motionFrame[i] = 255;
             } else {
@@ -312,8 +305,18 @@ static void* processingThread(void* arg) {
         frame_counter++;
 
         // Get FrameBuffer for first stream
-        const std::map<const Stream*, FrameBuffer*> &buffers2 = request->buffers();
-        FrameBuffer* fb = buffers2.begin()->second;
+        //const std::map<const Stream*, FrameBuffer*> &buffers2 = request->findBuffer(mjpegStream);
+        FrameBuffer* fb = request->findBuffer(mjpegStream);
+
+
+
+
+        // TODO: change settings->mjpeg to mjpeg as appropriate below
+
+
+
+
+
 
         // do mjpeg compression?
         // only if we have connections
@@ -333,15 +336,15 @@ static void* processingThread(void* arg) {
                 Y = mapped_buffers[ fb ][0];
                 U = mapped_buffers[ fb ][1];
                 V = mapped_buffers[ fb ][2];
-                Y_max = (Y + settings->h264.y_length) - settings->h264.stride;
-                U_max = (U + settings->h264.uv_length) - stride2;
-                V_max = (V + settings->h264.uv_length) - stride2;
+                Y_max = (Y + settings->mjpeg.y_length) - settings->mjpeg.stride;
+                U_max = (U + settings->mjpeg.uv_length) - stride2;
+                V_max = (V + settings->mjpeg.uv_length) - stride2;
 
                 char timestamp[40];
                 time_t now = time(NULL);
                 struct tm *t = localtime(&now);
                 strftime(timestamp, 39, "%Y-%m-%d %H:%M:%S", t);
-                annotate(timestamp, strlen(timestamp), Y, 10 + (10 * settings->h264.stride), settings->h264.stride);
+                annotate(timestamp, strlen(timestamp), Y, 10 + (10 * settings->mjpeg.stride), settings->mjpeg.stride);
 
                 auto start_time = std::chrono::high_resolution_clock::now();
                 // use a fresh jpeg_buffer each iteration to avoid OOM:
@@ -350,9 +353,9 @@ static void* processingThread(void* arg) {
                 // this takes 80-130ms, longer than frame at 10fps
                 jpeg_start_compress(&cinfo_yuv, TRUE);
 
-                for (uint8_t *Y_row = Y, *U_row = U, *V_row = V; cinfo_yuv.next_scanline < settings->h264.height;)
+                for (uint8_t *Y_row = Y, *U_row = U, *V_row = V; cinfo_yuv.next_scanline < settings->mjpeg.height;)
                 {
-                    for (int i = 0; i < 16; i++, Y_row += settings->h264.stride) {
+                    for (int i = 0; i < 16; i++, Y_row += settings->mjpeg.stride) {
                         y_rows[i] = std::min(Y_row, Y_max);
                     }
                     for (int i = 0; i < 8; i++, U_row += stride2, V_row += stride2) {
@@ -423,7 +426,7 @@ static void* processingThread(void* arg) {
             // 40ms for 640x480
             bool simd = true;
             if (!simd) {
-                for (int i = 0; i < settings->h264.y_length; i++) {
+                for (int i = 0; i < settings->mjpeg.y_length; i++) {
                     // compare previous and current
                     int delta = abs(previousFrame[i] - Y[i]);
                     compared_pixels++;
@@ -443,9 +446,9 @@ static void* processingThread(void* arg) {
                 uint8x16_t _a, _b, _c;
 
                 uint8_t* current = Y;
-                uint8_t* current_max = current + settings->h264.y_length;
+                uint8_t* current_max = current + settings->mjpeg.y_length;
                 uint8_t* previous = previousFrame;
-                uint8_t* previous_max = previous + settings->h264.y_length;
+                uint8_t* previous_max = previous + settings->mjpeg.y_length;
                 uint8_t count = 0;
 
                 for (; current < current_max; current += batch, previous += batch) {
@@ -470,9 +473,9 @@ static void* processingThread(void* arg) {
 
             if (changed_pixels > changed_pixels_threshold) {
                 // motion was detected!
-                memcpy(previousFrame, Y, settings->h264.y_length);
+                memcpy(previousFrame, Y, settings->mjpeg.y_length);
 
-                Y_max = (Y + settings->h264.y_length) - settings->h264.stride;
+                Y_max = (Y + settings->mjpeg.y_length) - settings->mjpeg.stride;
 
                 // use a fresh jpeg_buffer each iteration to avoid OOM:
                 // https://github.com/libjpeg-turbo/libjpeg-turbo/issues/610
@@ -480,9 +483,9 @@ static void* processingThread(void* arg) {
                 // this takes 80-130ms, longer than frame at 10fps
                 jpeg_start_compress(&cinfo_grayscale, TRUE);
 
-                for (uint8_t *Y_row = Y; cinfo_grayscale.next_scanline < settings->h264.height;)
+                for (uint8_t *Y_row = Y; cinfo_grayscale.next_scanline < settings->mjpeg.height;)
                 {
-                    for (int i = 0; i < 16; i++, Y_row += settings->h264.stride) {
+                    for (int i = 0; i < 16; i++, Y_row += settings->mjpeg.stride) {
                         y_rows[i] = std::min(Y_row, Y_max);
                     }
 
@@ -779,14 +782,22 @@ int main()
 {
     signal(SIGINT, signalHandler);
 
-    settings.h264.width = width;
-    settings.h264.height = height;
-    settings.h264.stride = width;
-    settings.h264.fps = fps;
-    settings.mjpeg.width = 640;
-    settings.mjpeg.height = 480;
-    settings.mjpeg.stride = 640;
-    settings.mjpeg.quality = 90;
+    //int width = 1640;
+    //int height = 922;
+    // 1920 1080
+    // 640 480
+
+    settings.h264.width = 1920;
+    settings.h264.height = 1080;
+    settings.h264.stride = 1920;
+    settings.h264.fps = 20;
+
+    // a third of full-res
+    // 640 x 360
+    settings.mjpeg.width = settings.mjpeg.width / 3;
+    settings.mjpeg.height = settings.mjpeg.height / 3;
+    settings.mjpeg.stride = settings.mjpeg.width / 3;
+    settings.mjpeg.quality = 95;
 
     pthread_t processingThreadId;
     void* processingThreadStatus;
@@ -817,27 +828,25 @@ int main()
     camera->acquire();
 
     // VideoRecording
-    std::unique_ptr<CameraConfiguration> config = camera->generateConfiguration( { StreamRole::VideoRecording }); //, StreamRole::VideoRecording } );
+    std::unique_ptr<CameraConfiguration> config = camera->generateConfiguration( { StreamRole::VideoRecording, StreamRole::VideoRecording } );
+    // smaller for MJPEG
+    StreamConfiguration &mjpegStreamConfig = config->at(0);
+    mjpegStreamConfig.pixelFormat = libcamera::formats::YUV420;
+    //mjpegStreamConfig.colorSpace = libcamera::ColorSpace::Jpeg;
+    mjpegStreamConfig.size.width = settings.mjpeg.width;
+    mjpegStreamConfig.size.height = settings.mjpeg.height;
+    mjpegStreamConfig.bufferCount = 10;
+
     // Full resolution for h264
-    StreamConfiguration &streamConfig = config->at(0);
-    streamConfig.pixelFormat = libcamera::formats::YUV420;
-    streamConfig.colorSpace = libcamera::ColorSpace::Jpeg; // TODO: is this necessary?
-    streamConfig.size.width = settings.h264.width;
-    streamConfig.size.height = settings.h264.height;
+    StreamConfiguration &h264StreamConfig = config->at(1);
+    h264StreamConfig.pixelFormat = libcamera::formats::YUV420;
+    //h264StreamConfig.colorSpace = libcamera::ColorSpace::Jpeg; // TODO: is this necessary?
+    h264StreamConfig.size.width = settings.h264.width;
+    h264StreamConfig.size.height = settings.h264.height;
     // This seems to default to 4, but we want to queue buffers for post
     // processing, so we need to raise it.
     // 10 works but 20 fails and isn't an error we can catch
-    streamConfig.bufferCount = 10;
-
-    /*
-    // smaller for MJPEG
-    streamConfig = config->at(1);
-    streamConfig.pixelFormat = libcamera::formats::YUV420;
-    streamConfig.colorSpace = libcamera::ColorSpace::Jpeg;
-    streamConfig.size.width = settings.mjpeg.width;
-    streamConfig.size.height = settings.mjpeg.height;
-    streamConfig.bufferCount = 10;
-    */
+    h264StreamConfig.bufferCount = 10;
 
     CameraConfiguration::Status status = config->validate();
     if (status == CameraConfiguration::Invalid) {
@@ -845,48 +854,78 @@ int main()
     } else if (status == CameraConfiguration::Adjusted) {
         fprintf(stderr, "Camera Configuration was invalid and has been adjusted\n");
     }
+    settings.mjpeg.stride = mjpegStreamConfig.stride;
+    printf("MJPEG Stride after configuring: %d\n", mjpegStreamConfig.stride);
+    settings.mjpeg.y_length = settings.mjpeg.stride * settings.mjpeg.height;
+    settings.mjpeg.uv_length = settings.mjpeg.y_length / 4; // I think this is the right size
+
     // Configuration might have set an unexpected stride, use it.
     // Think YUV420 needs 64bit alignment according to:
     // https://github.com/raspberrypi/picamera2/blob/main/picamera2/configuration.py
-    //streamConfig = config->at(0);
-    settings.h264.stride = streamConfig.stride;
-    printf("H264 Stride after configuring: %d\n", streamConfig.stride);
+    settings.h264.stride = h264StreamConfig.stride;
+    printf("H264 Stride after configuring: %d\n", h264StreamConfig.stride);
     settings.h264.y_length = settings.h264.stride * settings.h264.height;
     settings.h264.uv_length = settings.h264.y_length / 4; // I think this is the right size
 
-    /*
-    streamConfig = config->at(1);
-    settings.mjpeg.stride = streamConfig.stride;
-    printf("MJPEG Stride after configuring: %d\n", streamConfig.stride);
-    settings.mjpeg.y_length = settings.mjpeg.stride * settings.mjpeg.height;
-    settings.mjpeg.uv_length = settings.mjpeg.y_length / 4; // I think this is the right size
-    */
 
     camera->configure(config.get());
+    h264Stream = h264StreamConfig.stream();
+    mjpegStream = mjpegStreamConfig.stream();
 
     FrameBufferAllocator *allocator = new FrameBufferAllocator(camera);
 
-
+    std::vector<std::unique_ptr<Request>> requests;
     for (StreamConfiguration &cfg : *config) {
+        Stream *stream = cfg.stream();
         // TODO: it's possible we'll need our own allocator for raspi,
         // so we can enqueue many frames for processing in other threads
-        int ret = allocator->allocate(cfg.stream());
+        int ret = allocator->allocate(stream);
         // This error handling doesn't catch a failure to allocate 20 buffers
         if (ret < 0) {
             std::cerr << "Can't allocate buffers" << std::endl;
             return -ENOMEM;
         }
 
-        size_t allocated = allocator->buffers(cfg.stream()).size();
+        const std::vector<std::unique_ptr<FrameBuffer>> &buffers = allocator->buffers(stream);
+        size_t allocated = buffers.size();
         std::cout << "Allocated " << allocated << " buffers for stream" << std::endl;
+
+        // now do mmaping
+        for (unsigned int i = 0; i < buffers.size(); ++i) {
+            const std::unique_ptr<FrameBuffer> &buffer = buffers[i];
+
+            // Unless libcamera or other libs change, we know what kind of planes we're dealing with.
+            // For each buffer, planes seem to share the same dmabuf fd.
+            // However, libcamera-apps handles this with looping logic.
+            // NOTE: At one point I tried more than 1 mmap per dmabuf, but for some reason it didn't work.
+            auto planes = buffer->planes();
+            size_t buffer_size = planes[0].length + planes[1].length + planes[2].length;
+            if (planes[0].fd.get() != planes[1].fd.get() || planes[0].fd.get() != planes[2].fd.get()) {
+                // ERROR, unexpected buffer layout
+                printf("UNEXPECTED BUFFER AND FD LAYOUT\n");
+                return 1;
+            }
+
+            uint8_t* memory = (uint8_t*)mmap(NULL, buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED, planes[0].fd.get(), 0);
+            if (!memory) {
+                printf("UNEXPECTED MMAP\n");
+                return 1;
+            }
+            // Get a handle to each plane's memory region within the mmap/dmabuf
+            mapped_buffers[buffer.get()].push_back(memory);
+            mapped_buffers[buffer.get()].push_back(memory + planes[0].length);
+            mapped_buffers[buffer.get()].push_back(memory + planes[0].length + planes[1].length);
+        }
     }
 
 
-    Stream *stream = streamConfig.stream();
-    const std::vector<std::unique_ptr<FrameBuffer>> &buffers = allocator->buffers(stream);
-    std::vector<std::unique_ptr<Request>> requests;
-
-    for (unsigned int i = 0; i < buffers.size(); ++i) {
+    // Now create requests and add buffers
+    Stream *stream1 = mjpegStreamConfig.stream();
+    Stream *stream2 = h264StreamConfig.stream();
+    const std::vector<std::unique_ptr<FrameBuffer>> &buffers1 = allocator->buffers(stream1);
+    const std::vector<std::unique_ptr<FrameBuffer>> &buffers2 = allocator->buffers(stream2);
+    
+    for (unsigned int i = 0; i < buffers1.size(); ++i) {
         std::unique_ptr<Request> request = camera->createRequest();
         if (!request)
         {
@@ -894,46 +933,23 @@ int main()
             return -ENOMEM;
         }
 
-        const std::unique_ptr<FrameBuffer> &buffer = buffers[i];
 
-        // Unless libcamera or other libs change, we know what kind of planes we're dealing with.
-        // For each buffer, planes seem to share the same dmabuf fd.
-        // However, libcamera-apps handles this with looping logic.
-        // NOTE: At one point I tried more than 1 mmap per dmabuf, but for some reason it didn't work.
-        auto planes = buffer->planes();
-        size_t buffer_size = planes[0].length + planes[1].length + planes[2].length;
-        if (planes[0].fd.get() != planes[1].fd.get() || planes[0].fd.get() != planes[2].fd.get()) {
-            // ERROR, unexpected buffer layout
-            printf("UNEXPECTED BUFFER AND FD LAYOUT\n");
-            return 1;
-        }
-
-        /*
-        printf("Plane lengths. Y: %d U: %d V: %d\n",
-            planes[0].length,
-            planes[1].length,
-            planes[2].length);
-        */
-
-        uint8_t* memory = (uint8_t*)mmap(NULL, buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED, planes[0].fd.get(), 0);
-        if (!memory) {
-            printf("UNEXPECTED MMAP\n");
-            return 1;
-        }
-        // Get a handle to each plane's memory region within the mmap/dmabuf
-        mapped_buffers[buffer.get()].push_back(memory);
-        mapped_buffers[buffer.get()].push_back(memory + planes[0].length);
-        mapped_buffers[buffer.get()].push_back(memory + planes[0].length + planes[1].length);
-
-        int ret = request->addBuffer(stream, buffer.get());
+        int ret = request->addBuffer(stream1, buffers1[i].get());
         if (ret < 0)
         {
-            std::cerr << "Can't set buffer for request"
-                    << std::endl;
+            printf("Can't add buffer1 for request\n");
             return ret;
         }
+        ret = request->addBuffer(stream2, buffers2[i].get());
+        if (ret < 0)
+        {
+            printf("Can't add buffer2 for request\n");
+            return ret;
+        }
+        
 
         requests.push_back(std::move(request));
+        
     }
 
     camera->requestCompleted.connect(requestComplete);
@@ -942,9 +958,8 @@ int main()
     // TODO: create ControlList and move to global var
     // TODO: is there a raspi-specific implementation of this?
     libcamera::ControlList controls(libcamera::controls::controls);
-    int framerate = fps;
-    int64_t frame_time = 1000000 / framerate; // in microseconds
-    controls.set(libcamera::controls::FrameDurationLimits, { frame_time, frame_time });
+    int64_t frame_time = 1000000 / settings.h264.fps; // in microseconds
+    controls.set(libcamera::controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({ frame_time, frame_time }));
 
     camera->start(&controls);
     for (auto &request : requests) {
@@ -1017,7 +1032,11 @@ int main()
     pthread_join(httpServerThreadId, &httpServerThreadStatus);
 
     camera->stop();
-    allocator->free(stream);
+    // for each stream
+    for (StreamConfiguration &cfg : *config) {
+        Stream *stream = cfg.stream();
+        allocator->free(stream);
+    }
     delete allocator;
     camera->release();
     camera.reset();
