@@ -81,7 +81,7 @@ typedef struct PiMeraSettings {
         size_t uv_length;
     } mjpeg;
     // if this percentage of pixels change, motion is detected
-    float percentage_for_motion = 0.05;
+    float percentage_for_motion = 0.01;
     uint8_t pixel_delta_threshold = 50;
 
 
@@ -329,7 +329,7 @@ static void* processingThread(void* arg) {
 
         // is anyone trying to watch the stream?
         if (num_mjpeg_connections > 0) {
-            if (frame_counter > mjpeg_at) {
+            if (frame_counter >= mjpeg_at) {
                 // update threshold for when we should encode next mjpeg frame
                 mjpeg_at = frame_counter + mjpeg_sleep;
 
@@ -405,7 +405,7 @@ static void* processingThread(void* arg) {
         // SHOULD WE DO MOTION DETECTION FOR THIS FRAME?
         // let's try assuming the Y channel IS gray
         // TODO: speed this up with vector processing or SIMD
-        if (frame_counter > detection_at) {
+        if (frame_counter >= detection_at) {
             detection_at = frame_counter + detection_sleep;
             //printf("Checking frame for motion\n");
 
@@ -555,6 +555,7 @@ static void requestComplete(Request *request)
     }
 
     // TODO: can we add a timestamp into the frame here?
+    // unfortunately we can't set the Request cookie after the fact
 
     pthread_mutex_lock(&requestsAtCameraMetricMutex);
     requestsAtCameraMetric--;
@@ -790,13 +791,13 @@ int main()
     settings.h264.width = 1920;
     settings.h264.height = 1080;
     settings.h264.stride = 1920;
-    settings.h264.fps = 20;
-
+    settings.h264.fps = 30;
+    
     // a third of full-res
     // 640 x 360
-    settings.mjpeg.width = settings.mjpeg.width / 3;
-    settings.mjpeg.height = settings.mjpeg.height / 3;
-    settings.mjpeg.stride = settings.mjpeg.width / 3;
+    settings.mjpeg.width = settings.h264.width / 3;
+    settings.mjpeg.height = settings.h264.height / 3;
+    settings.mjpeg.stride = settings.h264.width / 3;
     settings.mjpeg.quality = 95;
 
     pthread_t processingThreadId;
