@@ -121,7 +121,8 @@ typedef struct {
 } CALLBACK_USERDATA;
 
 typedef struct {
-    uint8_t fps;
+    uint8_t yuv_fps;
+    uint8_t h264_fps;
 } STATS_T;
 STATS_T stats;
 pthread_mutex_t statsMutex;
@@ -651,8 +652,11 @@ static void destroy_resizer(MMAL_COMPONENT_T *splitter, MMAL_CONNECTION_T *conne
 void h264_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     CALLBACK_USERDATA *userdata = (CALLBACK_USERDATA *)port->userdata;
 
-    mmal_buffer_header_release(buffer);
+    pthread_mutex_lock(&statsMutex);
+    stats.h264_fps++;
+    pthread_mutex_unlock(&statsMutex);
 
+    mmal_buffer_header_release(buffer);
 
     send_buffers_to_port(port, userdata->handles->h264_encoder_pool->queue);
 }
@@ -871,7 +875,7 @@ void resizer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     //logInfo("Got buffer. Length: %d", buffer->length);
 
     pthread_mutex_lock(&statsMutex);
-    stats.fps++;
+    stats.yuv_fps++;
     pthread_mutex_unlock(&statsMutex);
 
     mmal_buffer_header_release(buffer);
@@ -964,8 +968,8 @@ void heartbeat(HANDLES* handles) {
         previousSeconds = delta.tv_sec;
 
         pthread_mutex_lock(&statsMutex);
-        logInfo("STATS. FPS: %d", stats.fps);
-        stats.fps = 0;
+        logInfo("STATS. YUV FPS: %d | H264 FPS: %d", stats.yuv_fps, stats.h264_fps);
+        stats.yuv_fps = stats.h264_fps = 0;
         pthread_mutex_unlock(&statsMutex);
 
         // update time annotation when second has changed
@@ -1054,15 +1058,13 @@ int main(int argc, const char **argv) {
         destroy_splitter(handles.splitter, handles.splitter_connection);
         destroy_camera(&handles);
         return EX_ERROR;
-    }
-    /*
-     else if ((status = create_h264_encoder(&handles.h264_encoder, &handles.h264_encoder_pool, &handles.h264_encoder_connection, handles.splitter->output[SPLITTER_H264_PORT], &settings)) != MMAL_SUCCESS) {
+    } else if ((status = create_h264_encoder(&handles.h264_encoder, &handles.h264_encoder_pool, &handles.h264_encoder_connection, handles.splitter->output[SPLITTER_H264_PORT], &settings)) != MMAL_SUCCESS) {
         logError("createH26create_h264_encoder4Encoder failed",  __func__);
         destroy_splitter(handles.splitter, handles.splitter_connection);
         destroy_camera(&handles);
         return EX_ERROR;
     }
-    */
+
 /*
     
 
@@ -1164,14 +1166,12 @@ int main(int argc, const char **argv) {
 
 
     // H264 ENCODER SETUP
-    /*
     handles.h264_encoder->output[0]->userdata = (struct MMAL_PORT_USERDATA_T *)&callbackUserdata;
 
     if (verbose) {
         logInfo("Providing buffers to h264 encoder output");
     }
     send_buffers_to_port(handles.h264_encoder->output[0], handles.h264_encoder_pool->queue);
-    */
 
 
 
