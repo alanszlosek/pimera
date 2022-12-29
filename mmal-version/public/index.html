@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta charset="utf-8" />
+<style>
+html, body, div,img {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+/*
+div {
+
+    display: inline-block;
+    width: 49%;
+}
+*/
+div img {
+    display: block;
+	max-width: 100%;
+}
+
+#highlight {
+    display: none;
+    position: absolute;
+    border: 1px solid red;
+}
+</style>
+</head>
+<body>
+<div>
+	<img src="/stream.mjpeg" id="stream" />
+</div>
+<div>
+    <!--
+
+        <img src="/motion.mjpeg" />
+    -->
+</div>
+
+<div>
+    <p id="region"></p>
+    <p id="pixels"></p>
+</div>
+
+<div id="highlight"></div>
+
+<script>
+    let width = 1640;
+    let height = 922;
+
+    let el = document.getElementById("stream");
+    let start;
+    let x1, x2, y1, y2;
+    let x_start, x_end, y_start, y_end;
+    let hl = document.getElementById('highlight');
+    let hlActive = false;
+    el.addEventListener("mousedown", function(e) {
+        var rect = e.target.getBoundingClientRect();
+        x1 = e.clientX - rect.left;
+        y1 = e.clientY - rect.top;
+
+        hl.offsetTop = e.offsetTop;
+        hl.offsetLeft = e.offsetLeft;
+        hl.display = "block";
+        hlActive = true;
+
+        e.preventDefault();
+        e.stopPropagation();
+    });
+    el.addEventListener("mousemove", function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!hlActive) {
+            return;
+        }
+        el.width = el.offsetLeft - e.offsetLeft;
+        el.height = el.offsetTop - e.offsetTop;
+
+    });
+    el.addEventListener("mouseup", function(e) {
+        var rect = e.target.getBoundingClientRect();
+        x2 = e.clientX - rect.left;
+        y2 = e.clientY - rect.top;
+
+        x_start = Math.min(x1, x2);
+        x_end = Math.max(x1, x2);
+        y_start = Math.min(y1, y2);
+        y_end = Math.max(y1, y2);
+
+        let region = [x_start, y_start, x_end, y_end];
+        let pixels = (x_end - x_start) * (y_end - y_start);
+
+        document.getElementById("region").innerText = region.join(',');
+        document.getElementById("pixels").innerText = 'Pixels: ' + pixels;
+
+
+        /*
+
+        let out = [];
+        for (let y = y_start; y < y_end; y++) {
+            let i = (y * width) + x_start;
+            out.push(
+                i,
+                i + x_end
+            );
+        }
+        console.log(out);
+        */
+
+        hl.display = "none";
+        e.preventDefault();
+        e.stopPropagation();
+    });
+    el.addEventListener("dragstart", function(e) {
+        e.preventDefault();
+    });
+
+
+
+
+</script>
+</body>
+</html>

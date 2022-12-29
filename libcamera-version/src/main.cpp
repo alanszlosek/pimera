@@ -14,6 +14,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 //#include <netinet/in.h>
+#include <stdarg.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -25,7 +26,12 @@ typedef unsigned long jpeg_mem_len_t;
 #endif
 
 //#include "encoder.hpp"
+#include "logging.hpp"
 #include "annotate.hpp"
+#include "encoder.hpp"
+#include "image.hpp"
+#include "settings.hpp"
+#include "reuse.hpp"
 
 using namespace libcamera;
 
@@ -35,23 +41,24 @@ static std::shared_ptr<Camera> camera;
 // we can pre-calculate length of each YUV data buffer in main
 // and store in settings
 std::map<FrameBuffer *, std::vector<uint8_t*>> mapped_buffers;
-Stream* h264Stream;
-Stream* mjpegStream;
 
-pthread_mutex_t processingMutex;
-pthread_cond_t processingCondition;
-std::list<libcamera::Request*> processingQueue;
+pthread_mutex_t processing_mutex;
+pthread_cond_t processing_condition;
+std::list<libcamera::Request*> processing_queue;
+
+pthread_mutex_t reuse_queue_mutex;
+std::queue<Request*> reuse_queue;
 
 #define MAX_POLL_FDS 100
-pthread_mutex_t streamConnectionsMutex;
-std::list<int> streamConnections;
-pthread_mutex_t motionConnectionsMutex;
-std::list<int> motionConnections;
+pthread_mutex_t stream_connections_mutex;
+std::list<int> stream_connections;
+pthread_mutex_t motion_connections_mutex;
+std::list<int> motion_connections;
 struct pollfd http_fds[MAX_POLL_FDS];
 int http_fds_count = 0;
 
 
-pthread_mutex_t runningMutex;
+pthread_mutex_t running_mutex;
 int running = 1;
 
 // Miscellaneous
@@ -60,73 +67,22 @@ pthread_mutex_t requestsAtQueueMetricMutex;
 int requestsAtCameraMetric = 0;
 int requestsAtQueueMetric = 0;
 
-
-typedef struct PiMeraSettings {
-    struct {
-        unsigned int width;
-        unsigned int height;
-        unsigned int stride;
-        unsigned int fps;
-        size_t y_length;
-        size_t uv_length;
-    } h264;
-
-    struct {
-        unsigned int width;
-        unsigned int height;
-        unsigned int stride;
-        unsigned int quality = 90;
-        // TODO: pre-calculate these in main for YUV plane buffers
-        size_t y_length;
-        size_t uv_length;
-    } mjpeg;
-    // if this percentage of pixels change, motion is detected
-    float percentage_for_motion = 0.01;
-    uint8_t pixel_delta_threshold = 50;
+// TODO: raise this when figure out how to alloc more buffers
+// a map of numbered Request to the timestamp it came into requestComplete()
+struct timeval request_timestamps[30];
 
 
-} PiMeraSettings;
+
 
 PiMeraSettings settings;
 
 
-void logError(char const* msg, const char *func) {
-    // time prefix
-    char t[40];
-    time_t rawtime;
-    struct tm timeinfo;
-    time(&rawtime);
-    localtime_r(&rawtime, &timeinfo);
-    strftime(t, 40, "%Y-%m-%d %H:%M:%S", &timeinfo);
-
-    fprintf(stdout, "%s [ERR] in %s: %s\n", t, func, msg);
-    fflush(stdout);
-}
-void logInfo(char const* fmt, ...) {
-    // time prefix
-    char t[40];
-    time_t rawtime;
-    struct tm timeinfo;
-    va_list ap;
-    time(&rawtime);
-    localtime_r(&rawtime, &timeinfo);
-    strftime(t, 40, "%Y-%m-%d %H:%M:%S", &timeinfo);
-
-    fprintf(stdout, "%s [INFO] ", t);
-
-    va_start(ap, fmt);
-    vfprintf(stdout, fmt, ap);
-    va_end(ap);
-    fprintf(stdout, "\n");
-    fflush(stdout);
-}
-
 void signalHandler(int signal_number) {
     logError("Got signal. Exiting", __func__);
     // TODO: think there's an atomic variable meant to help with "signal caught" flags
-    pthread_mutex_lock(&runningMutex);
+    pthread_mutex_lock(&running_mutex);
     running = 0;
-    pthread_mutex_unlock(&runningMutex);
+    pthread_mutex_unlock(&running_mutex);
     logInfo("Signaled");
 }
 
@@ -134,10 +90,14 @@ void signalHandler(int signal_number) {
 static void* processingThread(void* arg) {
     const PiMeraSettings *settings = (const PiMeraSettings*)arg;
     libcamera::Request* request;
+    FrameBuffer* mjpeg_buffer;
+    FrameBuffer* h264_buffer;
+    struct timeval request_timestamp;
+    bool reuse_request = true;
+    bool recording = false;
 
     // BEGIN JPEG STUFF
     // set up jpeg stuff once
-    int stride2 = settings->mjpeg.stride / 2;
     uint8_t *Y;
     uint8_t *U;
     uint8_t *V;
@@ -145,60 +105,39 @@ static void* processingThread(void* arg) {
     uint8_t *U_max;
     uint8_t *V_max;
     
-    JSAMPROW y_rows[16];
-    JSAMPROW u_rows[8];
-    JSAMPROW v_rows[8];
+    // fullsize JPEG for timelapse images
+    PiMeraJPEG full;
+
     // for yuv data
-    JSAMPARRAY rows_yuv[] = { y_rows, u_rows, v_rows };
-    struct jpeg_compress_struct cinfo_yuv;
-    struct jpeg_error_mgr jerr_yuv;
-    uint8_t* jpeg_buffer_yuv = NULL;
-    jpeg_mem_len_t jpeg_len_yuv = 0;
+    PiMeraJPEG color;
+    
     // for grayscale data
+    PiMeraJPEG grayscale;
+
+    // grayscale helpers
     uint8_t* uv_data;
     // static row data for U and V since we want grayscale
     JSAMPROW grayscale_uv_rows[8];
     // use same data for u and v
-    JSAMPARRAY grayscale_rows[] = { y_rows, grayscale_uv_rows, grayscale_uv_rows };
-    struct jpeg_compress_struct cinfo_grayscale;
-    struct jpeg_error_mgr jerr_grayscale;
-    uint8_t* jpeg_buffer_grayscale = NULL;
-    jpeg_mem_len_t jpeg_len_grayscale = 0;
-    char filename[40];
+    JSAMPARRAY grayscale_rows[] = { grayscale.y_rows, grayscale_uv_rows, grayscale_uv_rows };
 
-    // mjpeg stuff
+    char filename[101];
+
+    // mjpeg streaming stuff
     const char *boundary = "--HATCHA\r\nContent-Type: image/jpeg\r\nContent-length: ";
-    int boundaryLength = strlen(boundary);
-    char contentLength[20];
-    int contentLengthLength;
+    int boundary_length = strlen(boundary);
+    char content_length[20];
+    int content_length_length;
+
+    imageInit(&full, settings->h264.width, settings->h264.height, 90);
 
     // yuv
-    // https://stackoverflow.com/questions/16390783/how-to-compress-yuyv-raw-data-to-jpeg-using-libjpeg
-    cinfo_yuv.err = jpeg_std_error(&jerr_yuv);
-    jpeg_create_compress(&cinfo_yuv);
-    // using width here instead of stride to exclude the extra columns of pixels
-    cinfo_yuv.image_width = settings->mjpeg.width;
-    cinfo_yuv.image_height = settings->mjpeg.height;
-    cinfo_yuv.input_components = 3;
-    cinfo_yuv.in_color_space = JCS_YCbCr;
-    cinfo_yuv.jpeg_color_space = cinfo_yuv.in_color_space;
-    cinfo_yuv.restart_interval = 0;
-    jpeg_set_defaults(&cinfo_yuv);
-    cinfo_yuv.raw_data_in = TRUE;
-    jpeg_set_quality(&cinfo_yuv, settings->mjpeg.quality, TRUE);
+    imageInit(&color, settings->mjpeg.width, settings->mjpeg.height, settings->mjpeg.quality);
 
     // grayscale
-    cinfo_grayscale.err = jpeg_std_error(&jerr_grayscale);
-    jpeg_create_compress(&cinfo_grayscale);
-    // using width here instead of stride to exclude the extra columns of pixels
-    cinfo_grayscale.image_width = settings->mjpeg.width;
-    cinfo_grayscale.image_height = settings->mjpeg.height;
-    //cinfo_grayscale.num_components = 1;
-    cinfo_grayscale.input_components = 3;
-    cinfo_grayscale.in_color_space = JCS_YCbCr;
-    //cinfo_grayscale.jpeg_color_space = JCS_GRAYSCALE;
-    cinfo_grayscale.restart_interval = 0;
-    jpeg_set_defaults(&cinfo_grayscale);
+    imageInit(&grayscale, settings->mjpeg.width, settings->mjpeg.height, settings->mjpeg.quality);
+
+
     // since can't get grayscale color space to work, prepare array of uv data to simulate grayscale from Y plane data
     // prepare 8 rows of data, maybe?
     int uv_length = (settings->mjpeg.stride * 8) / 2;
@@ -206,37 +145,38 @@ static void* processingThread(void* arg) {
     memset(uv_data, 128, uv_length);
     // prepare grayscale_uv_rows pointers
     uint8_t* U_row = uv_data;
-    for (int i = 0; i < 8; i++, U_row += stride2) {
+    for (int i = 0; i < 8; i++, U_row += settings->mjpeg.stride2) {
         grayscale_uv_rows[i] = U_row;
     }
-
-    // even though working with Y plane, raw doesn't work
-    // JSAMPARRAY with just Y data and write raw lines ends up generating an image with only half of the scanlines filled in
-
-    // raw lets us do detection with compression in around 60ms, otherwise 250ms
-    cinfo_grayscale.raw_data_in = TRUE;
-    jpeg_set_quality(&cinfo_grayscale, settings->mjpeg.quality, TRUE);
-    
-
+    grayscale.yuv_rows[1] = grayscale_uv_rows;
+    grayscale.yuv_rows[2] = grayscale_uv_rows;
     // END JPEG STUFF
 
 
     unsigned int frame_counter = 0;
 
-    // TODO: the threshold variable names need a rethink
-    unsigned int mjpeg_sleep = settings->h264.fps / 10; // * 60; // once a second
+    // MJPEG related
+    unsigned int mjpeg_sleep = settings->h264.fps / 10; // N times a second
     unsigned int mjpeg_at = mjpeg_sleep;
     unsigned int num_mjpeg_connections = 0;
 
     // BEGIN MOTION DETECTION STUFF
-    uint8_t* previousFrame = (uint8_t*) malloc(settings->mjpeg.stride * settings->mjpeg.height);
-    uint8_t* motionFrame = (uint8_t*) malloc(settings->mjpeg.stride * settings->mjpeg.height);
+    uint8_t* previous_frame = (uint8_t*) malloc(settings->mjpeg.stride * settings->mjpeg.height);
+    uint8_t* motion_frame = (uint8_t*) malloc(settings->mjpeg.stride * settings->mjpeg.height);
     // we'll push pixels with motion to 255, leave others at their regular values,
     // unsure whether this will help us visualize where motion took place
-    uint8_t* highlightedMotionFrame = (uint8_t*) malloc(settings->mjpeg.stride * settings->mjpeg.height);
+    uint8_t* highlighted_motion_frame = (uint8_t*) malloc(settings->mjpeg.stride * settings->mjpeg.height);
 
     unsigned int detection_sleep = settings->h264.fps / 3;
     unsigned int detection_at = detection_sleep;
+
+    unsigned int cooldown_sleep = settings->h264.fps * 2;
+    unsigned int cooldown_at = 0;
+
+    // 10 second timelapse images
+    unsigned int timelapse_sleep = settings->h264.fps *  10;
+    unsigned int timelapse_at = timelapse_sleep;
+
 
     // number of pixels that must be changed to detect motion
     unsigned int changed_pixels_threshold = settings->mjpeg.y_length * settings->percentage_for_motion;
@@ -244,22 +184,21 @@ static void* processingThread(void* arg) {
 
     printf("Pixel threshold %d\n", changed_pixels_threshold);
 
-    // Wait for first frame, and store it in previousFrame
-    pthread_mutex_lock(&processingMutex);
-    while (processingQueue.size() == 0) {
-        pthread_cond_wait(&processingCondition, &processingMutex);
+    // Wait for first frame, and store it in previous_frame
+    pthread_mutex_lock(&processing_mutex);
+    while (processing_queue.size() == 0) {
+        pthread_cond_wait(&processing_condition, &processing_mutex);
     }
-    printf("Storing first frame\n");
-    request = processingQueue.front();
-    processingQueue.pop_front(); // TODO: why both?
-    pthread_mutex_unlock(&processingMutex);
-    // TODO: hoist up these declarations
-    const std::map<const Stream*, FrameBuffer*> &buffers = request->buffers();
-    FrameBuffer* fb = buffers.begin()->second;
-    Y = mapped_buffers[ fb ][0];
+    printf("Using first frame as previous\n");
+    request = processing_queue.front();
+    processing_queue.pop_front(); // TODO: why both?
+    pthread_mutex_unlock(&processing_mutex);
+
+    mjpeg_buffer = request->findBuffer(settings->mjpeg.stream);
+    Y = mapped_buffers[ mjpeg_buffer ][0];
     // TODO: only copy regions we care about, once that data is available
     for (int i = 0; i < (settings->mjpeg.stride * settings->mjpeg.height); i++) {
-        previousFrame[i] = Y[i];
+        previous_frame[i] = Y[i];
     }
 
     // for testing grayscale
@@ -267,22 +206,44 @@ static void* processingThread(void* arg) {
     for (int y = 0, i = 0; y < settings->mjpeg.height; y++) {
         for (int x = 0; x < settings->mjpeg.width; x++, i++) {
             if (x > 255) {
-                motionFrame[i] = 255;
+                motion_frame[i] = 255;
             } else {
-                motionFrame[i] = x;
+                motion_frame[i] = x;
             }
         }
     }
     */
 
     while (running) {
-        pthread_mutex_lock(&processingMutex);
-        while (processingQueue.size() == 0) {
-            pthread_cond_wait(&processingCondition, &processingMutex);
+
+        // Check re-use queue and re-add to camera
+        pthread_mutex_lock(&reuse_queue_mutex);
+        while(reuse_queue.size() > 0) {
+            Request *r = reuse_queue.front();
+            reuse_queue.pop();
+            pthread_mutex_unlock(&reuse_queue_mutex);
+            
+            logInfo("Queueing request back to camera");
+            r->reuse(Request::ReuseBuffers);
+            camera->queueRequest(r);
+
+            pthread_mutex_lock(&requestsAtCameraMetricMutex);
+            requestsAtCameraMetric++;
+            pthread_mutex_unlock(&requestsAtCameraMetricMutex);
+
+            pthread_mutex_lock(&reuse_queue_mutex);
         }
-        request = processingQueue.front();
-        processingQueue.pop_front(); // TODO: why both?
-        pthread_mutex_unlock(&processingMutex);
+        pthread_mutex_unlock(&reuse_queue_mutex);
+
+
+        pthread_mutex_lock(&processing_mutex);
+        while (processing_queue.size() == 0) {
+            // TODO: this can starve the "return to camera" loop above
+            pthread_cond_wait(&processing_condition, &processing_mutex);
+        }
+        request = processing_queue.front();
+        processing_queue.pop_front();
+        pthread_mutex_unlock(&processing_mutex);
 
         pthread_mutex_lock(&requestsAtQueueMetricMutex);
         requestsAtQueueMetric--;
@@ -295,6 +256,8 @@ static void* processingThread(void* arg) {
             return NULL;
         }
 
+        reuse_request = true;
+
         // Decisions
         /*
         - do we need to convert to jpeg and send to http?
@@ -304,168 +267,154 @@ static void* processingThread(void* arg) {
 
         frame_counter++;
 
-        // Get FrameBuffer for first stream
-        //const std::map<const Stream*, FrameBuffer*> &buffers2 = request->findBuffer(mjpegStream);
-        FrameBuffer* fb = request->findBuffer(mjpegStream);
+        //unsigned int index = request->cookie();
+        request_timestamp = request_timestamps[ request->cookie() ];
 
-
-
-
-        // TODO: change settings->mjpeg to mjpeg as appropriate below
-
-
-
+        //mjpeg_buffer = request->findBuffer(settings->mjpeg.stream);
 
 
 
         // do mjpeg compression?
         // only if we have connections
         // TODO: fix naming on these
-        pthread_mutex_lock(&streamConnectionsMutex);
-        num_mjpeg_connections = streamConnections.size();
-        pthread_mutex_unlock(&streamConnectionsMutex);
+        pthread_mutex_lock(&stream_connections_mutex);
+        num_mjpeg_connections = stream_connections.size();
+        pthread_mutex_unlock(&stream_connections_mutex);
 
-        // TODO: how do we add timestamp into the frame?
-
-        // is anyone trying to watch the stream?
-        if (num_mjpeg_connections > 0) {
-            if (frame_counter >= mjpeg_at) {
-                // update threshold for when we should encode next mjpeg frame
-                mjpeg_at = frame_counter + mjpeg_sleep;
-
-                Y = mapped_buffers[ fb ][0];
-                U = mapped_buffers[ fb ][1];
-                V = mapped_buffers[ fb ][2];
-                Y_max = (Y + settings->mjpeg.y_length) - settings->mjpeg.stride;
-                U_max = (U + settings->mjpeg.uv_length) - stride2;
-                V_max = (V + settings->mjpeg.uv_length) - stride2;
-
-                char timestamp[40];
-                time_t now = time(NULL);
-                struct tm *t = localtime(&now);
-                strftime(timestamp, 39, "%Y-%m-%d %H:%M:%S", t);
-                annotate(timestamp, strlen(timestamp), Y, 10 + (10 * settings->mjpeg.stride), settings->mjpeg.stride);
-
-                auto start_time = std::chrono::high_resolution_clock::now();
-                // use a fresh jpeg_buffer each iteration to avoid OOM:
-                // https://github.com/libjpeg-turbo/libjpeg-turbo/issues/610
-                jpeg_mem_dest(&cinfo_yuv, &jpeg_buffer_yuv, &jpeg_len_yuv);
-                // this takes 80-130ms, longer than frame at 10fps
-                jpeg_start_compress(&cinfo_yuv, TRUE);
-
-                for (uint8_t *Y_row = Y, *U_row = U, *V_row = V; cinfo_yuv.next_scanline < settings->mjpeg.height;)
-                {
-                    for (int i = 0; i < 16; i++, Y_row += settings->mjpeg.stride) {
-                        y_rows[i] = std::min(Y_row, Y_max);
-                    }
-                    for (int i = 0; i < 8; i++, U_row += stride2, V_row += stride2) {
-                        u_rows[i] = std::min(U_row, U_max);
-                        v_rows[i] = std::min(V_row, V_max);
-                    }
-
-                    //JSAMPARRAY rows[] = { y_rows, u_rows, v_rows };
-                    jpeg_write_raw_data(&cinfo_yuv, rows_yuv, 16);
-                    //jpeg_write_scanlines(&cinfo, rows, 16);
-                }
-                jpeg_finish_compress(&cinfo_yuv);
-                //printf("new len %lu\n", jpeg_len_yuv);
-                
-                auto ms_int = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start_time);
-                printf("    Stream Encode time %ldms\n", ms_int.count());
-                // TODO: would love to emit metrics to influx
-
-                // Stream to browsers
-                // prepare headers
-                contentLengthLength = snprintf(contentLength, 20, "%lu\r\n\r\n", jpeg_len_yuv);
-                pthread_mutex_lock(&streamConnectionsMutex);
-                auto end = streamConnections.end();
-                for (auto fd = streamConnections.begin(); fd != end; fd++) {
-                    send(*fd, boundary, boundaryLength, 0);
-                    send(*fd, contentLength, contentLengthLength, 0);
-                    send(*fd, jpeg_buffer_yuv, jpeg_len_yuv, 0);
-                }
-                pthread_mutex_unlock(&streamConnectionsMutex);
-
-                /*
-
-                snprintf(filename, 40, "/home/pi/stills/%d.jpeg", frame_counter);
-                fp = fopen(filename, "wb");
-                fwrite(jpeg_buffer_yuv, jpeg_len_yuv, 1, fp);
-                fclose(fp);
-                */
-
-                free(jpeg_buffer_yuv);
-                jpeg_buffer_yuv = NULL;
+        //maybe?
+        /*
+        if (mjpeg_at < frame_counter) {
+            // check conns
+            pthread_mutex_lock(&stream_connections_mutex);
+            num_mjpeg_connections = stream_connections.size();
+            pthread_mutex_unlock(&stream_connections_mutex);
+            if (num_mjpeg_connections > 0) {
+                // next time
+                mjpeg_at = frame_counter + 1;
             }
+
+        } else if (mjpeg_at == frame_counter) {
+            // do
+
+        } else {
+            // wait
+        }
+        */
+
+        // Is anyone watching the stream?
+        if (0 && num_mjpeg_connections > 0 && frame_counter >= mjpeg_at) {
+            // update threshold for when we should encode next mjpeg frame
+            mjpeg_at = frame_counter + mjpeg_sleep;
+
+            mjpeg_buffer = request->findBuffer(settings->mjpeg.stream);
+            Y = mapped_buffers[ mjpeg_buffer ][0];
+            U = mapped_buffers[ mjpeg_buffer ][1];
+            V = mapped_buffers[ mjpeg_buffer ][2];
+            Y_max = Y + settings->mjpeg.y_max;
+            U_max = U + settings->mjpeg.uv_max;
+            V_max = V + settings->mjpeg.uv_max;
+
+            // TODO: hoist this up, only compute once if we need it
+            char timestamp[40];
+            struct tm *t = localtime(&request_timestamp.tv_sec);
+            strftime(timestamp, 39, "%Y-%m-%d %H:%M:%S", t);
+            annotate(timestamp, 3, strlen(timestamp), Y, 10 + (10 * settings->mjpeg.stride), settings->mjpeg.stride);
+
+            auto start_time = std::chrono::high_resolution_clock::now();
+            imageStart(&color);
+
+            for (uint8_t *Y_row = Y, *U_row = U, *V_row = V; color.cinfo.next_scanline < settings->mjpeg.height;)
+            {
+                // TODO: I don't like all these min calls
+                for (int i = 0; i < 16; i++, Y_row += settings->mjpeg.stride) {
+                    color.y_rows[i] = std::min(Y_row, Y_max);
+                }
+                for (int i = 0; i < 8; i++, U_row += settings->mjpeg.stride2, V_row += settings->mjpeg.stride2) {
+                    color.u_rows[i] = std::min(U_row, U_max);
+                    color.v_rows[i] = std::min(V_row, V_max);
+                }
+                jpeg_write_raw_data(&color.cinfo, color.yuv_rows, 16);
+            }
+            jpeg_finish_compress(&color.cinfo);
+            
+            auto ms_int = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start_time);
+            //printf("    MJPEG compress time %ldms\n", ms_int.count());
+            // TODO: would love to emit metrics to influx
+
+            // Stream to browsers
+            // prepare headers
+            content_length_length = snprintf(content_length, 20, "%lu\r\n\r\n", color.buffer_length);
+            pthread_mutex_lock(&stream_connections_mutex);
+            auto end = stream_connections.end();
+            for (auto fd = stream_connections.begin(); fd != end; fd++) {
+                send(*fd, boundary, boundary_length, 0);
+                send(*fd, content_length, content_length_length, 0);
+                send(*fd, color.buffer, color.buffer_length, 0);
+            }
+            pthread_mutex_unlock(&stream_connections_mutex);
+
+            /*
+
+            snprintf(filename, 40, "/home/pi/stills/%d.jpeg", frame_counter);
+            fp = fopen(filename, "wb");
+            fwrite(jpeg_buffer_yuv, jpeg_len_yuv, 1, fp);
+            fclose(fp);
+            */
+
+            free(color.buffer);
+            color.buffer = NULL;
         }
 
 
-        // DO H264 ENCODING?
-
         // SHOULD WE DO MOTION DETECTION FOR THIS FRAME?
-        // let's try assuming the Y channel IS gray
-        // TODO: speed this up with vector processing or SIMD
         if (frame_counter >= detection_at) {
             detection_at = frame_counter + detection_sleep;
-            //printf("Checking frame for motion\n");
+            printf("Checking frame for motion\n");
 
             uint changed_pixels = 0;
             uint compared_pixels = 0;
 
             auto start_time = std::chrono::high_resolution_clock::now();
 
-            Y = mapped_buffers[ fb ][0];
-            // NOTE: copying pixels in bulk ahead of time, instead of using an else below to copy unchanged pixels individually saves 20ms off
-            // skipping motionFrame stuff altogether saves 2ms more
-            //memcpy(motionFrame, Y, settings->y_length);
+            mjpeg_buffer = request->findBuffer(settings->mjpeg.stream);
+            Y = mapped_buffers[ mjpeg_buffer ][0];
+
+            // skipping motion_frame stuff altogether saves 2ms more
+            //memcpy(motion_frame, Y, settings->y_length);
 
 
             // TODO: only compare regions we care about, once that data is available
             // TODO: this takes 500ms to 1080p, not fast enough
-            // 320ms without motionFrame writes
+            // 320ms without motion_frame writes
             // 40ms for 640x480
-            bool simd = true;
-            if (!simd) {
-                for (int i = 0; i < settings->mjpeg.y_length; i++) {
-                    // compare previous and current
-                    int delta = abs(previousFrame[i] - Y[i]);
-                    compared_pixels++;
-                    if (delta > settings->pixel_delta_threshold) {
-                        // highlight pixels that have changed
-                        //motionFrame[i] = 255;
-                        changed_pixels++;
-                    }
-                }
-            
-            } else {
-                int batch = 16;
-                // constants
-                uint8x16_t _threshold = vdupq_n_u8(settings->pixel_delta_threshold);
-                uint8x16_t _one = vdupq_n_u8(1);
 
-                uint8x16_t _a, _b, _c;
+            int batch = 16;
+            // constants
+            uint8x16_t _threshold = vdupq_n_u8(settings->pixel_delta_threshold);
+            uint8x16_t _one = vdupq_n_u8(1);
 
-                uint8_t* current = Y;
-                uint8_t* current_max = current + settings->mjpeg.y_length;
-                uint8_t* previous = previousFrame;
-                uint8_t* previous_max = previous + settings->mjpeg.y_length;
-                uint8_t count = 0;
+            uint8x16_t _a, _b, _c;
 
-                for (; current < current_max; current += batch, previous += batch) {
-                    _a = vld1q_u8(current);
-                    _b = vld1q_u8(previous);
+            uint8_t* current = Y;
+            uint8_t* current_max = current + settings->mjpeg.y_length;
+            uint8_t* previous = previous_frame;
+            uint8_t* previous_max = previous + settings->mjpeg.y_length;
+            uint8_t count = 0;
 
-                    // subtraction then absolute value
-                    _c = vabdq_u8(_b, _a);
-                    // compare result against threshold
-                    _a = vcgtq_u8(_c, _threshold);
-                    // use bitmask from compare to set 1s in matching elements
-                    _b = vandq_u8(_a, _one);
-                    // increment counter - this overflows!
-                    //_count = vaddq_u8(_count, _b);
-                    // sum and get result out
-                    changed_pixels += vaddvq_u8(_b);
-                }
+            for (; current < current_max; current += batch, previous += batch) {
+                _a = vld1q_u8(current);
+                _b = vld1q_u8(previous);
+
+                // subtraction then absolute value
+                _c = vabdq_u8(_b, _a);
+                // compare result against threshold
+                _a = vcgtq_u8(_c, _threshold);
+                // use bitmask from compare to set 1s in matching elements
+                _b = vandq_u8(_a, _one);
+                // increment counter - this overflows!
+                //_count = vaddq_u8(_count, _b);
+                // sum and get result out
+                changed_pixels += vaddvq_u8(_b);
             }
 
 
@@ -473,38 +422,41 @@ static void* processingThread(void* arg) {
 
             if (changed_pixels > changed_pixels_threshold) {
                 // motion was detected!
-                memcpy(previousFrame, Y, settings->mjpeg.y_length);
+                memcpy(previous_frame, Y, settings->mjpeg.y_length);
 
-                Y_max = (Y + settings->mjpeg.y_length) - settings->mjpeg.stride;
+                Y_max = Y + settings->mjpeg.y_max;
 
-                // use a fresh jpeg_buffer each iteration to avoid OOM:
-                // https://github.com/libjpeg-turbo/libjpeg-turbo/issues/610
-                jpeg_mem_dest(&cinfo_grayscale, &jpeg_buffer_grayscale, &jpeg_len_grayscale);
-                // this takes 80-130ms, longer than frame at 10fps
-                jpeg_start_compress(&cinfo_grayscale, TRUE);
+                // skipping motion frame for now
+                // TODO: need conditional around this
+                /*
+                imageStart(&grayscale);
 
-                for (uint8_t *Y_row = Y; cinfo_grayscale.next_scanline < settings->mjpeg.height;)
+                for (uint8_t *Y_row = Y; grayscale.cinfo.next_scanline < settings->mjpeg.height;)
                 {
                     for (int i = 0; i < 16; i++, Y_row += settings->mjpeg.stride) {
-                        y_rows[i] = std::min(Y_row, Y_max);
+                        grayscale.y_rows[i] = std::min(Y_row, Y_max);
                     }
 
-                    jpeg_write_raw_data(&cinfo_grayscale, grayscale_rows, 16);
+                    jpeg_write_raw_data(&grayscale.cinfo, grayscale.yuv_rows, 16);
                 }
-                jpeg_finish_compress(&cinfo_grayscale);
+                jpeg_finish_compress(&grayscale.cinfo);
 
                 // Stream to browsers
                 // prepare headers
-                contentLengthLength = snprintf(contentLength, 20, "%lu\r\n\r\n", jpeg_len_grayscale);
-                pthread_mutex_lock(&motionConnectionsMutex);
-                auto end = motionConnections.end();
-                for (auto fd = motionConnections.begin(); fd != end; fd++) {
-                    send(*fd, boundary, boundaryLength, 0);
-                    send(*fd, contentLength, contentLengthLength, 0);
-                    send(*fd, jpeg_buffer_grayscale, jpeg_len_grayscale, 0);
+                content_length_length = snprintf(content_length, 20, "%lu\r\n\r\n", grayscale.buffer_length);
+                pthread_mutex_lock(&motion_connections_mutex);
+                auto end = motion_connections.end();
+                for (auto fd = motion_connections.begin(); fd != end; fd++) {
+                    send(*fd, boundary, boundary_length, 0);
+                    send(*fd, content_length, content_length_length, 0);
+                    send(*fd, grayscale.buffer, grayscale.buffer_length, 0);
                 }
-                pthread_mutex_unlock(&motionConnectionsMutex);
+                pthread_mutex_unlock(&motion_connections_mutex);
+                free(grayscale.buffer);
+                grayscale.buffer = NULL;
+                */
                 
+
                 /*
                 snprintf(filename, 40, "/home/pi/stills/motion_%d.jpeg", frame_counter);
                 fp = fopen(filename, "wb");
@@ -512,27 +464,112 @@ static void* processingThread(void* arg) {
                 fclose(fp);
                 */
 
-                free(jpeg_buffer_grayscale);
-                jpeg_buffer_grayscale = NULL;
+
 
                 printf("  Detection Time: %ldms Changed pixels: %d MOTION DETECTED\n", ms_int.count(), changed_pixels);
 
+                // don't re-use this, we're going to hand data to h264 encoder
+                reuse_request = false;
+
+
+                //logInfo("Encoding DMABUF");
+                if (!recording) {
+                    recording = true;
+                    // signal first frame in recording
+                    encoder_enqueue(request, request_timestamp, true, false);
+                } else {
+                    encoder_enqueue(request, request_timestamp, false, false);
+                }
+                cooldown_at = frame_counter + cooldown_sleep;
+
             } else {
                 printf("  Detection Time: %ldms Changed pixels: %d\n", ms_int.count(), changed_pixels);
+
+                // TODO: wait for cooldown
+                if (recording && frame_counter > cooldown_at) {
+                    recording = false;
+                    // signal last frame in recording
+                    encoder_enqueue(request, request_timestamp, false, true);
+                    reuse_request = false;
+                }
+
+
+                /*
+                if reached cooldown (300ms after motion last detected?)
+                    if we were saving to h2
+                        tell encoder to save and close
+                */
             }
+        } else if (recording) {
+            // Not time to check for motion, but save frame if recording
+            
+            encoder_enqueue(request, request_timestamp, false, false);
+            reuse_request = false;
         }
 
-        request->reuse(Request::ReuseBuffers);
-        camera->queueRequest(request);
+        if (0 && frame_counter >= timelapse_at) {
+            timelapse_at = frame_counter + timelapse_sleep;
 
-        pthread_mutex_lock(&requestsAtCameraMetricMutex);
-        requestsAtCameraMetric++;
-        pthread_mutex_unlock(&requestsAtCameraMetricMutex);
+            h264_buffer = request->findBuffer(settings->h264.stream);
+
+            Y = mapped_buffers[ h264_buffer ][0];
+            U = mapped_buffers[ h264_buffer ][1];
+            V = mapped_buffers[ h264_buffer ][2];
+            // TODO: perhaps precompute these into settings
+            Y_max = Y + settings->h264.y_max;
+            U_max = U + settings->h264.uv_max;
+            V_max = V + settings->h264.uv_max;
+
+            char timestamp[40];
+            struct tm *t = localtime(&request_timestamp.tv_sec);
+            strftime(timestamp, 39, "%Y-%m-%d %H:%M:%S", t);
+            annotate(timestamp, 4, strlen(timestamp), Y, 10 + (10 * settings->h264.stride), settings->h264.stride);
+
+            auto start_time = std::chrono::high_resolution_clock::now();
+            imageStart(&full);
+
+            for (uint8_t *Y_row = Y, *U_row = U, *V_row = V; full.cinfo.next_scanline < settings->h264.height;)
+            {
+                for (int i = 0; i < 16; i++, Y_row += settings->h264.stride) {
+                    full.y_rows[i] = std::min(Y_row, Y_max);
+                }
+                for (int i = 0; i < 8; i++, U_row += settings->h264.stride2, V_row += settings->h264.stride2) {
+                    full.u_rows[i] = std::min(U_row, U_max);
+                    full.v_rows[i] = std::min(V_row, V_max);
+                }
+                jpeg_write_raw_data(&full.cinfo, full.yuv_rows, 16);
+            }
+            jpeg_finish_compress(&full.cinfo);
+            
+            auto ms_int = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start_time);
+            printf("    Full-sized image compress time %ldms\n", ms_int.count());
+            // TODO: would love to emit metrics to influx
+            strftime(timestamp, 39, "%Y%m%d%H%M%S", t);
+            snprintf(filename, 100, "/home/pi/stills/%s.%dx%d.jpeg", timestamp, settings->h264.width, settings->h264.height);
+            FILE *fp = fopen(filename, "wb");
+            fwrite(full.buffer, full.buffer_length, 1, fp);
+            fclose(fp);
+
+            free(full.buffer);
+            full.buffer = NULL;
+        }
+
+        // reuse if we haven't handed data over to h264 encoder
+        if (reuse_request) {
+            request->reuse(Request::ReuseBuffers);
+            camera->queueRequest(request);
+            pthread_mutex_lock(&requestsAtCameraMetricMutex);
+            requestsAtCameraMetric++;
+            pthread_mutex_unlock(&requestsAtCameraMetricMutex);
+        }
+
     }
     //jpeg_destroy_compress(&cinfo_yuv);
-    jpeg_destroy_compress(&cinfo_grayscale);
+    jpeg_destroy_compress(&color.cinfo);
+    jpeg_destroy_compress(&full.cinfo);
+    jpeg_destroy_compress(&grayscale.cinfo);
     // Free motion detection buffers
-    free(previousFrame);
+    free(previous_frame);
     free(uv_data);
     
     return NULL;
@@ -541,18 +578,25 @@ static void* processingThread(void* arg) {
 
 time_t previousSeconds = 0;
 int frames = 0;
-unsigned int frame_counter = 0;
 static void requestComplete(Request *request)
 {
-    struct timespec delta;
-    clock_gettime(CLOCK_REALTIME, &delta);
-    if (previousSeconds == delta.tv_sec) {
+    // TODO: do we need this?
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+
+    //struct timespec delta;
+    //clock_gettime(CLOCK_REALTIME, &delta);
+    if (previousSeconds == tv.tv_sec) {
         frames++;
     } else {
         fprintf(stdout, "Frames: %d\n", frames);
         frames = 1;
-        previousSeconds = delta.tv_sec;
+        previousSeconds = tv.tv_sec;
     }
+
+    // associate timestamp with this request
+    request_timestamps[ request->cookie() ].tv_sec = tv.tv_sec;
+    request_timestamps[ request->cookie() ].tv_usec = tv.tv_usec;
 
     // TODO: can we add a timestamp into the frame here?
     // unfortunately we can't set the Request cookie after the fact
@@ -561,22 +605,30 @@ static void requestComplete(Request *request)
     requestsAtCameraMetric--;
     pthread_mutex_unlock(&requestsAtCameraMetricMutex);
 
-    pthread_mutex_lock(&processingMutex);
-    processingQueue.push_back(request);
-    pthread_cond_signal(&processingCondition);
-    pthread_mutex_unlock(&processingMutex);
+    pthread_mutex_lock(&processing_mutex);
+    processing_queue.push_back(request);
+    pthread_cond_signal(&processing_condition);
+    pthread_mutex_unlock(&processing_mutex);
 
     pthread_mutex_lock(&requestsAtQueueMetricMutex);
     requestsAtQueueMetric++;
     pthread_mutex_unlock(&requestsAtQueueMetricMutex);
 }
 
+// TODO: FILL THIS OUT
+void reuse_request(Request *request) {
+    // enqueue for re-add
+    pthread_mutex_lock(&reuse_queue_mutex);
+    reuse_queue.push(request);
+    pthread_mutex_unlock(&reuse_queue_mutex);
+}
+
 
 
 // HTTP SERVER STUFF
-static int httpServerCleanupArg = 0;
-static void httpServerThreadCleanup(void *arg) {
-    pthread_mutex_unlock(&runningMutex);
+static int http_server_cleanup_arg = 0;
+static void http_server_thread_cleanup(void *arg) {
+    pthread_mutex_unlock(&running_mutex);
 
     logInfo("HTTP Server thread closing down");
     for (int i = 0; i < http_fds_count; i++) {
@@ -584,12 +636,12 @@ static void httpServerThreadCleanup(void *arg) {
         close(http_fds[i].fd);
     }
 
-    pthread_mutex_lock(&streamConnectionsMutex);
-    streamConnections.clear();
-    pthread_mutex_unlock(&streamConnectionsMutex);
+    pthread_mutex_lock(&stream_connections_mutex);
+    stream_connections.clear();
+    pthread_mutex_unlock(&stream_connections_mutex);
 }
 
-static void *httpServerThread(void*) {
+static void *http_server_thread(void*) {
     bool r;
     int status;
     int ret;
@@ -608,7 +660,7 @@ static void *httpServerThread(void*) {
     int i;
     int yes = 1;
 
-    pthread_cleanup_push(httpServerThreadCleanup, NULL);
+    pthread_cleanup_push(http_server_thread_cleanup, NULL);
 
     response_header_length = snprintf(response_header, 128, "HTTP/1.1 200 OK\r\nConnection: Keep-Alive\r\nCache-Control: no-store\r\nContent-Type: multipart/x-mixed-replace; boundary=HATCHA\r\n\r\n");
 
@@ -652,9 +704,9 @@ static void *httpServerThread(void*) {
     http_fds_count++;
 
     logInfo("here 1");
-    pthread_mutex_lock(&runningMutex);
+    pthread_mutex_lock(&running_mutex);
     r = running;
-    pthread_mutex_unlock(&runningMutex);
+    pthread_mutex_unlock(&running_mutex);
     while (r) {
         // this blocks, which is what we want
         ret = poll(http_fds, http_fds_count, -1);
@@ -692,24 +744,24 @@ static void *httpServerThread(void*) {
                         ret = write(http_fds[i].fd, response1, response1_length);
                         ret += write(http_fds[i].fd, response2, response2_length);
                         
-                        pthread_mutex_lock(&runningMutex);
+                        pthread_mutex_lock(&running_mutex);
                         r = running;
-                        pthread_mutex_unlock(&runningMutex);
+                        pthread_mutex_unlock(&running_mutex);
 
                     } else if (strncmp(request, "GET /stream.mjpeg HTTP", 22) == 0) {
                         ret = write(http_fds[i].fd, response_header, response_header_length);
 
-                        pthread_mutex_lock(&streamConnectionsMutex);
-                        streamConnections.push_back(http_fds[i].fd);
-                        pthread_mutex_unlock(&streamConnectionsMutex);
+                        pthread_mutex_lock(&stream_connections_mutex);
+                        stream_connections.push_back(http_fds[i].fd);
+                        pthread_mutex_unlock(&stream_connections_mutex);
 
                     } else if (strncmp(request, "GET /motion.mjpeg HTTP", 22) == 0) {
                         // send motion pixels as mjpeg
                         ret = write(http_fds[i].fd, response_header, response_header_length);
 
-                        pthread_mutex_lock(&streamConnectionsMutex);
-                        motionConnections.push_back(http_fds[i].fd);
-                        pthread_mutex_unlock(&streamConnectionsMutex);
+                        pthread_mutex_lock(&stream_connections_mutex);
+                        motion_connections.push_back(http_fds[i].fd);
+                        pthread_mutex_unlock(&stream_connections_mutex);
 
                     } else {
                         // request for something we don't handle
@@ -726,14 +778,14 @@ static void *httpServerThread(void*) {
                     i++;
                 } else {
                     // Receive returned 0. Socket has been closed.
-                    pthread_mutex_lock(&streamConnectionsMutex);
+                    pthread_mutex_lock(&stream_connections_mutex);
                     // remove from mjpeg streaming list
-                    streamConnections.remove( http_fds[i].fd );
-                    pthread_mutex_unlock(&streamConnectionsMutex);
+                    stream_connections.remove( http_fds[i].fd );
+                    pthread_mutex_unlock(&stream_connections_mutex);
 
-                    pthread_mutex_lock(&motionConnectionsMutex);
-                    motionConnections.remove( http_fds[i].fd );
-                    pthread_mutex_unlock(&motionConnectionsMutex);
+                    pthread_mutex_lock(&motion_connections_mutex);
+                    motion_connections.remove( http_fds[i].fd );
+                    pthread_mutex_unlock(&motion_connections_mutex);
 
                     printf("Closing %d\n", http_fds[i].fd);
                     close(http_fds[i].fd);
@@ -748,9 +800,9 @@ static void *httpServerThread(void*) {
                 if (http_fds_count < MAX_POLL_FDS) {
                     if (socketfd < 0) {
                         fprintf(stdout, "Failed to accept: %d\n", errno);
-                        pthread_mutex_lock(&runningMutex);
+                        pthread_mutex_lock(&running_mutex);
                         r = running;
-                        pthread_mutex_unlock(&runningMutex);
+                        pthread_mutex_unlock(&running_mutex);
                         // TODO: think we should break if accept fails
                         // and perhaps re-listen?
                         break;
@@ -770,12 +822,12 @@ static void *httpServerThread(void*) {
             }
         }
 
-        pthread_mutex_lock(&runningMutex);
+        pthread_mutex_lock(&running_mutex);
         r = running;
-        pthread_mutex_unlock(&runningMutex);
+        pthread_mutex_unlock(&running_mutex);
     }
 
-    pthread_cleanup_pop(httpServerCleanupArg);
+    pthread_cleanup_pop(http_server_cleanup_arg);
     return NULL;
 }
 
@@ -790,27 +842,26 @@ int main()
 
     settings.h264.width = 1920;
     settings.h264.height = 1080;
-    settings.h264.stride = 1920;
     settings.h264.fps = 30;
     
     // a third of full-res
     // 640 x 360
     settings.mjpeg.width = settings.h264.width / 3;
     settings.mjpeg.height = settings.h264.height / 3;
-    settings.mjpeg.stride = settings.h264.width / 3;
     settings.mjpeg.quality = 95;
 
     pthread_t processingThreadId;
     void* processingThreadStatus;
-    pthread_mutex_init(&processingMutex, NULL);
-    pthread_cond_init(&processingCondition, NULL);
+    pthread_mutex_init(&processing_mutex, NULL);
+    pthread_cond_init(&processing_condition, NULL);
 
-    pthread_t httpServerThreadId;
-    void* httpServerThreadStatus;
-    pthread_mutex_init(&streamConnectionsMutex, NULL);
+    pthread_t http_server_threadId;
+    void* http_server_threadStatus;
+    pthread_mutex_init(&stream_connections_mutex, NULL);
 
     pthread_mutex_init(&requestsAtCameraMetricMutex, NULL);
     pthread_mutex_init(&requestsAtQueueMetricMutex, NULL);
+    pthread_mutex_init(&reuse_queue_mutex, NULL);
     
 
     std::unique_ptr<CameraManager> cm = std::make_unique<CameraManager>();
@@ -831,23 +882,23 @@ int main()
     // VideoRecording
     std::unique_ptr<CameraConfiguration> config = camera->generateConfiguration( { StreamRole::VideoRecording, StreamRole::VideoRecording } );
     // smaller for MJPEG
-    StreamConfiguration &mjpegStreamConfig = config->at(0);
-    mjpegStreamConfig.pixelFormat = libcamera::formats::YUV420;
-    //mjpegStreamConfig.colorSpace = libcamera::ColorSpace::Jpeg;
-    mjpegStreamConfig.size.width = settings.mjpeg.width;
-    mjpegStreamConfig.size.height = settings.mjpeg.height;
-    mjpegStreamConfig.bufferCount = 10;
+    StreamConfiguration &mjpeg_stream_config = config->at(0);
+    mjpeg_stream_config.pixelFormat = libcamera::formats::YUV420;
+    //mjpeg_stream_config.colorSpace = libcamera::ColorSpace::Jpeg;
+    mjpeg_stream_config.size.width = settings.mjpeg.width;
+    mjpeg_stream_config.size.height = settings.mjpeg.height;
+    mjpeg_stream_config.bufferCount = 10;
 
     // Full resolution for h264
-    StreamConfiguration &h264StreamConfig = config->at(1);
-    h264StreamConfig.pixelFormat = libcamera::formats::YUV420;
-    //h264StreamConfig.colorSpace = libcamera::ColorSpace::Jpeg; // TODO: is this necessary?
-    h264StreamConfig.size.width = settings.h264.width;
-    h264StreamConfig.size.height = settings.h264.height;
+    StreamConfiguration &h264_stream_config = config->at(1);
+    h264_stream_config.pixelFormat = libcamera::formats::YUV420;
+    //h264_stream_config.colorSpace = libcamera::ColorSpace::Jpeg; // TODO: is this necessary?
+    h264_stream_config.size.width = settings.h264.width;
+    h264_stream_config.size.height = settings.h264.height;
     // This seems to default to 4, but we want to queue buffers for post
     // processing, so we need to raise it.
     // 10 works but 20 fails and isn't an error we can catch
-    h264StreamConfig.bufferCount = 10;
+    h264_stream_config.bufferCount = 10;
 
     CameraConfiguration::Status status = config->validate();
     if (status == CameraConfiguration::Invalid) {
@@ -855,23 +906,32 @@ int main()
     } else if (status == CameraConfiguration::Adjusted) {
         fprintf(stderr, "Camera Configuration was invalid and has been adjusted\n");
     }
-    settings.mjpeg.stride = mjpegStreamConfig.stride;
-    printf("MJPEG Stride after configuring: %d\n", mjpegStreamConfig.stride);
+    settings.mjpeg.stride = mjpeg_stream_config.stride;
+    settings.mjpeg.stride2 = settings.mjpeg.stride / 2;
+    printf("MJPEG Stride after configuring: %d\n", settings.mjpeg.stride);
     settings.mjpeg.y_length = settings.mjpeg.stride * settings.mjpeg.height;
-    settings.mjpeg.uv_length = settings.mjpeg.y_length / 4; // I think this is the right size
+    settings.mjpeg.uv_length = settings.mjpeg.y_length / 4;
+    settings.mjpeg.y_max = settings.mjpeg.y_length - settings.mjpeg.stride;
+    settings.mjpeg.uv_max = settings.mjpeg.uv_length - settings.mjpeg.stride2;
 
     // Configuration might have set an unexpected stride, use it.
     // Think YUV420 needs 64bit alignment according to:
     // https://github.com/raspberrypi/picamera2/blob/main/picamera2/configuration.py
-    settings.h264.stride = h264StreamConfig.stride;
-    printf("H264 Stride after configuring: %d\n", h264StreamConfig.stride);
+
+    settings.h264.stride = h264_stream_config.stride;
+    settings.h264.stride2 = settings.h264.stride / 2;
+    printf("H264 Stride after configuring: %d\n", settings.h264.stride2);
     settings.h264.y_length = settings.h264.stride * settings.h264.height;
-    settings.h264.uv_length = settings.h264.y_length / 4; // I think this is the right size
+    settings.h264.uv_length = settings.h264.y_length / 4;
+    settings.h264.yuv_length = settings.h264.y_length + (settings.h264.uv_length * 2);
+    settings.h264.y_max = settings.h264.y_length - settings.h264.stride;
+    settings.h264.uv_max = settings.h264.uv_length - settings.h264.stride2;
+    
 
 
     camera->configure(config.get());
-    h264Stream = h264StreamConfig.stream();
-    mjpegStream = mjpegStreamConfig.stream();
+    settings.h264.stream = h264_stream_config.stream();
+    settings.mjpeg.stream = mjpeg_stream_config.stream();
 
     FrameBufferAllocator *allocator = new FrameBufferAllocator(camera);
 
@@ -921,13 +981,14 @@ int main()
 
 
     // Now create requests and add buffers
-    Stream *stream1 = mjpegStreamConfig.stream();
-    Stream *stream2 = h264StreamConfig.stream();
+    Stream *stream1 = mjpeg_stream_config.stream();
+    Stream *stream2 = h264_stream_config.stream();
     const std::vector<std::unique_ptr<FrameBuffer>> &buffers1 = allocator->buffers(stream1);
     const std::vector<std::unique_ptr<FrameBuffer>> &buffers2 = allocator->buffers(stream2);
     
     for (unsigned int i = 0; i < buffers1.size(); ++i) {
-        std::unique_ptr<Request> request = camera->createRequest();
+        // set cookie to i index
+        std::unique_ptr<Request> request = camera->createRequest(i);
         if (!request)
         {
             std::cerr << "Can't create request" << std::endl;
@@ -973,14 +1034,11 @@ int main()
 
     // start thread
     pthread_create(&processingThreadId, NULL, processingThread, (void*)&settings);
-    pthread_create(&httpServerThreadId, NULL, httpServerThread, (void*)&settings);
+    pthread_create(&http_server_threadId, NULL, http_server_thread, (void*)&settings);
 
-    //60 * 60 * 24 * 7; // days
-    int duration = 60;
-    duration = 3600 * 24; // 12 hours
-    duration = 3600 * 6;
+    encoder_init(&settings);
 
-    //for (int i = 0; i < duration; i++) {
+
     int r = 1;
     while (r) {
         //std::cout << "Sleeping" << std::endl;
@@ -1000,13 +1058,13 @@ int main()
         requestsAtQueueMet = requestsAtQueueMetric;
         pthread_mutex_unlock(&requestsAtQueueMetricMutex);
 
-        pthread_mutex_lock(&streamConnectionsMutex);
-        streamConns = streamConnections.size();
-        pthread_mutex_unlock(&streamConnectionsMutex);
+        pthread_mutex_lock(&stream_connections_mutex);
+        streamConns = stream_connections.size();
+        pthread_mutex_unlock(&stream_connections_mutex);
 
-        pthread_mutex_lock(&motionConnectionsMutex);
-        motionConns = motionConnections.size();
-        pthread_mutex_unlock(&motionConnectionsMutex);
+        pthread_mutex_lock(&motion_connections_mutex);
+        motionConns = motion_connections.size();
+        pthread_mutex_unlock(&motion_connections_mutex);
 
         printf(
             "Req@Camera: %d Req@Queue: %d Stream conns: %d Motion conns %d\n",
@@ -1016,21 +1074,26 @@ int main()
             motionConns
         );
 
-        pthread_mutex_lock(&runningMutex);
+        pthread_mutex_lock(&running_mutex);
         r = running;
-        pthread_mutex_unlock(&runningMutex);
+        pthread_mutex_unlock(&running_mutex);
     }
 
+    pthread_mutex_lock(&running_mutex);
     running = 0;
+    pthread_mutex_unlock(&running_mutex);
+
     pthread_cancel(processingThreadId);
-    pthread_cancel(httpServerThreadId);
+    pthread_cancel(http_server_threadId);
     // figure out how to cancel this thread properly
-    pthread_mutex_lock(&processingMutex);
-    pthread_cond_signal(&processingCondition);
-    pthread_mutex_unlock(&processingMutex);
+    pthread_mutex_lock(&processing_mutex);
+    pthread_cond_signal(&processing_condition);
+    pthread_mutex_unlock(&processing_mutex);
 
     pthread_join(processingThreadId, &processingThreadStatus);
-    pthread_join(httpServerThreadId, &httpServerThreadStatus);
+    pthread_join(http_server_threadId, &http_server_threadStatus);
+
+    encoder_destroy();
 
     camera->stop();
     // for each stream

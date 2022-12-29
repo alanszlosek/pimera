@@ -1,11 +1,11 @@
 # apt install clang
 
-main: main.c
-	clang -O2 -o main \
+pimera: src/main.c
+	clang -O2 -o pimera \
 		-lmmal_core -lmmal_util -lmmal_vc_client -lvcos -lbcm_host -lm -lpthread \
-		main.c
+		src/main.c
 
-debug: main.c
-	clang -g -o main \
+debug: src/main.c
+	clang -g -o pimera \
 		-lmmal_core -lmmal_util -lmmal_vc_client -lvcos -lbcm_host -lm -lpthread \
-		main.c
+		src/main.c

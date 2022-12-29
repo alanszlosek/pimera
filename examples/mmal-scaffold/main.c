@@ -177,10 +177,6 @@ void signalHandler(int signal_number) {
 void setDefaultSettings(SETTINGS* settings) {
     char* c;
 
-    //settings->width = 1920;
-    //settings->height = 1080;
-    //settings->h264.fps = 30;
-    // lower settings keeps temperatures happy too
     // 1640x922 uses full sensor field-of-view, which is helpful
     settings->width = 1640;
     settings->height = 922;
