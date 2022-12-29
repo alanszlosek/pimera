@@ -17,13 +17,18 @@ For now, I'm focused on making it performant on the Pi Zero W. The size and powe
 * Receives 3 frame encodings from the camera at 20fps
   * H264 - saved to disk when motion is detected
   * YUV420 - used for motion detection
-  * MJPEG - used for MJPEG streaming
+  * MJPEG - for streaming/live-viewing to a web browser
 * Motion detection 3x per second
 * MJPEG streaming to browser at 2fps (planning more optimizations here)
 * CPU utilization of Pi Zero W stays under 15% even when streaming to browser
 * Frame annotated with timestamp and hostname
 * Configurable via INI file (resolution, fps, video save path, etc)
 * User specifies a rectangular region of the frame to check for motion in the INI
+
+## Features in Progress
+
+* Motion Detection should use SIMD when possible
+* Hoping to get to 30fps
 
 
 ## Supported Hardware
