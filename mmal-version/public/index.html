@@ -30,7 +30,7 @@ div img {
 </head>
 <body>
 <div>
-	<img src="/stream.mjpeg" id="stream" />
+	<img id="stream" />
 </div>
 <div>
     <!--
@@ -47,6 +47,7 @@ div img {
 <div id="highlight"></div>
 
 <script>
+document.addEventListener("readystatechange", function() {
     let width = 1640;
     let height = 922;
 
@@ -117,9 +118,9 @@ div img {
         e.preventDefault();
     });
 
+    el.src = "/stream.mjpeg?ts=" + Date.now() ;
 
-
-
+});
 </script>
 </body>
 </html>

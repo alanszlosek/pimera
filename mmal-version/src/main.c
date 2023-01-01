@@ -1621,8 +1621,8 @@ static void *httpServer(void *v) {
     int request_length = 8192;
     char* response_header = "HTTP/1.1 200 OK\r\nConnection: Keep-Alive\r\nCache-control: no-store\r\nContent-Type: multipart/x-mixed-replace; boundary=HATCHA\r\n\r\n";
     int response_header_length = strlen(response_header);
-    int response2_max = 2047;
-    char response1[1024], response2[2048]; // for index.html
+    int response2_max = 4096;
+    char response1[1024], response2[4097]; // for index.html
     int response1_length, response2_length;
     int i;
     int yes = 1;
@@ -1709,7 +1709,7 @@ static void *httpServer(void *v) {
                         ret = sendSocket(http_fds[i].fd, response1, response1_length);
                         ret += sendSocket(http_fds[i].fd, response2, response2_length);
 
-                    } else if (strncmp(request, "GET /stream.mjpeg HTTP", 22) == 0) {
+                    } else if (strncmp(request, "GET /stream.mjpeg?ts=", 21) == 0) {
                         ret = sendSocket(http_fds[i].fd, response_header, response_header_length);
 
                         pthread_mutex_lock(&stream_connections_mutex);
