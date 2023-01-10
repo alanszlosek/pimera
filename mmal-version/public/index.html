@@ -29,8 +29,8 @@ div img {
 </style>
 </head>
 <body>
-<div>
-	<img id="stream" />
+<div id="stream">
+	<img id="streamJpeg" />
 </div>
 <div>
     <!--
@@ -118,7 +118,7 @@ document.addEventListener("readystatechange", function() {
         e.preventDefault();
     });
 
-    el.src = "/stream.mjpeg?ts=" + Date.now() ;
+    document.getElementById("streamJpeg").src = "/stream.mjpeg?ts=" + Date.now() ;
 
 });
 </script>

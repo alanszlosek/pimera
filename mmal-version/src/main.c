@@ -42,7 +42,7 @@
 #define CAMERA_VIDEO_PORT 1
 #define SPLITTER_H264_PORT 0
 #define SPLITTER_MJPEG_PORT 1
-#define SPLITTER_BGR_PORT 2
+#define SPLITTER_YUV_PORT 2
 
 #define ERROR_CHECK_INTERVAL 10 //100
 #define DESIRED_OUTPUT_BUFFERS 3
@@ -205,11 +205,11 @@ struct HANDLES_S {
     MMAL_CONNECTION_T *mjpegEncoderConnection;
 
     MMAL_PORT_T* h264EncoderOutputPort;
-    MMAL_PORT_T* splitterBgrPort;
+    MMAL_PORT_T* splitterYuvPort;
 
     MMAL_POOL_T *h264EncoderPool; /// Pointer to the pool of buffers used by splitter output port 0
     MMAL_POOL_T *mjpegEncoderPool; /// Pointer to the pool of buffers used by encoder output port
-    MMAL_POOL_T *bgrPool; /// Pointer to the pool of buffers used by encoder output port
+    MMAL_POOL_T *yuvPool; /// Pointer to the pool of buffers used by encoder output port
 
     SETTINGS* settings;
     CALLBACK_USERDATA* h264CallbackUserdata;        /// Used to move data to the encoder callback
@@ -509,14 +509,12 @@ int sendSocket(int socket, char* data, int length) {
     // TODO: think through the attempts more
     while (totalWritten < length) {
         written = send(socket, data, remaining, MSG_NOSIGNAL);
-        // if nothing is written 3 times, bail
-        if (written) {
-            attempts = 0;
-        } else {
-            attempts++;
-            if (attempts >= 3) {
-                return -1;
-            }
+        // if fail to write 3 times, bail
+
+        attempts++;
+        if (attempts >= 3) {
+            logError("Three failed attempts to write to socket", __func__);
+            return -1;
         }
         remaining -= written;
         data += written;
@@ -836,7 +834,7 @@ static MMAL_STATUS_T createSplitter(HANDLES *handles, SETTINGS* settings) {
     for (i = 0; i < splitter->output_num; i++) {
         mmal_format_copy(splitter->output[i]->format, splitter->input[0]->format);
 
-        if (i == SPLITTER_BGR_PORT) {
+        if (i == SPLITTER_YUV_PORT) {
             // need both of these to move from opaque format
             splitter->output[i]->format->encoding = MMAL_ENCODING_I420;
             splitter->output[i]->format->encoding_variant = MMAL_ENCODING_I420;
@@ -853,7 +851,7 @@ static MMAL_STATUS_T createSplitter(HANDLES *handles, SETTINGS* settings) {
             return status;
         }
         /*
-        if (i == SPLITTER_BGR_PORT) {
+        if (i == SPLITTER_YUV_PORT) {
             fprintf(
                 stdout,
                 "bgr buf. num rec: %d size rec: %d\n",
@@ -878,18 +876,18 @@ static MMAL_STATUS_T createSplitter(HANDLES *handles, SETTINGS* settings) {
         return status;
     }
 
-    // create bgr pool
+    // create yuv pool
     //settings.vcosWidth * settings.vcosHeight * 3;
-    int bgr_buffer_size = splitter->output[SPLITTER_BGR_PORT]->buffer_size;
-    int bgr_num_buffers = splitter->output[SPLITTER_BGR_PORT]->buffer_num;
-    fprintf(stdout, "Creating bgr buffer pool with %d bufs of size: %d\n", bgr_num_buffers, bgr_buffer_size);
-    handles->bgrPool = mmal_port_pool_create(splitter->output[SPLITTER_BGR_PORT], bgr_num_buffers, bgr_buffer_size);
-    if (!handles->bgrPool) {
-        logError("mmal_port_pool_create failed for bgr output", __func__);
+    int yuv_buffer_size = splitter->output[SPLITTER_YUV_PORT]->buffer_size;
+    int yuv_num_buffers = splitter->output[SPLITTER_YUV_PORT]->buffer_num;
+    fprintf(stdout, "Creating yuv buffer pool with %d bufs of size: %d\n", yuv_num_buffers, yuv_buffer_size);
+    handles->yuvPool = mmal_port_pool_create(splitter->output[SPLITTER_YUV_PORT], yuv_num_buffers, yuv_buffer_size);
+    if (!handles->yuvPool) {
+        logError("mmal_port_pool_create failed for yuv output", __func__);
         // TODO: what error code for this?
     } else {
         if (settings->verbose) {
-            logInfo("Created BGR pool");
+            logInfo("Created yuv pool");
         }
     }
 
@@ -1495,23 +1493,22 @@ static void destroyH264Encoder(HANDLES *handles, SETTINGS *settings) {
 // END H264 FUNCTIONS
 
 
-// BEGIN BGR FUNCTIONS
-void bgrCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
+// BEGIN YUV FUNCTIONS
+void yuvCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     CALLBACK_USERDATA *userdata;
     SETTINGS *settings;
-    struct bgrNode* tail;
 
     userdata = (CALLBACK_USERDATA *)port->userdata;
     settings = userdata->settings;
 
-    //logInfo("got bgr");
+    //logInfo("got yuv");
     frame_counter++;
 
     pthread_mutex_lock(&statsMutex);
     stats.fps++;
     pthread_mutex_unlock(&statsMutex);
 
-    // fprintf(stdout, "bgr pts: %" PRId64 "\n", buffer->pts);
+    // fprintf(stdout, "yuv pts: %" PRId64 "\n", buffer->pts);
 
     // Does buffer have data?
     if (frame_counter == 1) {
@@ -1536,7 +1533,7 @@ void bgrCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         }
         */
 
-        //logInfo("BGRlength: %d", buffer->length);
+        //logInfo("YUVlength: %d", buffer->length);
 
         for (int i = 0; i < motionDetection.regions_length; i += 2) {
             int start = motionDetection.regions[i];
@@ -1554,7 +1551,8 @@ void bgrCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         pthread_mutex_lock(&motionDetectionMutex);
         if (changed_pixels > settings->changed_pixels_threshold) {
             motionDetection.motion_count++;
-            motionDetection.detection_at = frame_counter + settings->h264.fps;
+            // if motion is detected, check again in 2 seconds
+            motionDetection.detection_at = frame_counter + (settings->h264.fps * 2);
             // only copy if motion detected ....
             // this lets us detect slow moving items
             memcpy(motionDetection.previousFrame, buffer->data, settings->mjpeg.y_length);
@@ -1578,16 +1576,16 @@ void bgrCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     if (port->is_enabled) {
         MMAL_STATUS_T status;
         MMAL_BUFFER_HEADER_T* new_buffer;
-        while ( (new_buffer = mmal_queue_get(userdata->handles->bgrPool->queue)) ) {
+        while ( (new_buffer = mmal_queue_get(userdata->handles->yuvPool->queue)) ) {
             status = mmal_port_send_buffer(port, new_buffer);
             if (status != MMAL_SUCCESS) {
-                //logError("mmal_port_send_buffer failed, no buffer to return to bgr port\n", __func__);
+                //logError("mmal_port_send_buffer failed, no buffer to return to yuv port\n", __func__);
                 break;
             }
         }
     }
 }
-// END BGR FUNCTIONS
+// END YUV FUNCTIONS
 
 
 // HTTP SERVER STUFF
@@ -1978,7 +1976,7 @@ int main(int argc, const char **argv) {
     SETTINGS settings;
     HANDLES handles;
     CALLBACK_USERDATA h264CallbackUserdata;
-    CALLBACK_USERDATA bgrCallbackUserdata;
+    CALLBACK_USERDATA yuvCallbackUserdata;
     CALLBACK_USERDATA mjpegCallbackUserdata;
 
     MMAL_STATUS_T status = MMAL_SUCCESS;
@@ -1987,7 +1985,7 @@ int main(int argc, const char **argv) {
     MMAL_PORT_T *splitterInputPort = NULL;
     MMAL_PORT_T *splitterH264Port = NULL;
     MMAL_PORT_T *splitterMjpegPort = NULL;
-    MMAL_PORT_T *splitterBgrPort = NULL;
+    MMAL_PORT_T *splitterYuvPort = NULL;
     MMAL_PORT_T *h264EncoderInputPort = NULL;
     MMAL_PORT_T *h264EncoderOutputPort = NULL;
     MMAL_PORT_T *mjpegEncoderInputPort = NULL;
@@ -2006,8 +2004,8 @@ int main(int argc, const char **argv) {
     h264CallbackUserdata.handles = &handles;
     h264CallbackUserdata.settings = &settings;
     h264CallbackUserdata.h264FileKickoffLength = 0;
-    bgrCallbackUserdata.handles = &handles;
-    bgrCallbackUserdata.settings = &settings;
+    yuvCallbackUserdata.handles = &handles;
+    yuvCallbackUserdata.settings = &settings;
     mjpegCallbackUserdata.handles = &handles;
     mjpegCallbackUserdata.settings = &settings;
 
@@ -2095,8 +2093,8 @@ int main(int argc, const char **argv) {
     splitterInputPort = handles.splitter->input[0];
     splitterH264Port = handles.splitter->output[SPLITTER_H264_PORT];
     splitterMjpegPort = handles.splitter->output[SPLITTER_MJPEG_PORT];
-    splitterBgrPort = handles.splitter->output[SPLITTER_BGR_PORT];
-    handles.splitterBgrPort = splitterBgrPort;
+    splitterYuvPort = handles.splitter->output[SPLITTER_YUV_PORT];
+    handles.splitterYuvPort = splitterYuvPort;
 
     h264EncoderInputPort  = handles.h264_encoder->input[0];
     h264EncoderOutputPort = handles.h264_encoder->output[0];
@@ -2231,18 +2229,17 @@ int main(int argc, const char **argv) {
 
 
 
-    // BGR MOTION STUFF
-    // bgr is different than the others, we pass settings as userdata
-    splitterBgrPort->userdata = (struct MMAL_PORT_USERDATA_T *)&bgrCallbackUserdata;
+    // YUV MOTION STUFF
+    splitterYuvPort->userdata = (struct MMAL_PORT_USERDATA_T *)&yuvCallbackUserdata;
 
     if (settings.verbose) {
-        logInfo("Enabling splitter bgr output port");
+        logInfo("Enabling splitter yuv output port");
     }
 
     // Enable the splitter output port and tell it its callback function
-    status = mmal_port_enable(splitterBgrPort, bgrCallback);
+    status = mmal_port_enable(splitterYuvPort, yuvCallback);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_port_enable failed for bgr output", __func__);
+        logError("mmal_port_enable failed for yuv output", __func__);
         // disconnect and disable first?
         destroyMjpegEncoder(&handles, &settings);
         destroyH264Encoder(&handles, &settings);
@@ -2252,15 +2249,15 @@ int main(int argc, const char **argv) {
     }
 
     if (settings.verbose) {
-        logInfo("Providing buffers to bgr output");
+        logInfo("Providing buffers to yuv output");
     }
-    buffer = mmal_queue_get(handles.bgrPool->queue);
+    buffer = mmal_queue_get(handles.yuvPool->queue);
     while (buffer) {
-        status = mmal_port_send_buffer(splitterBgrPort, buffer);
+        status = mmal_port_send_buffer(splitterYuvPort, buffer);
         if (status != MMAL_SUCCESS) {
             break;
         }
-        buffer = mmal_queue_get(handles.bgrPool->queue);
+        buffer = mmal_queue_get(handles.yuvPool->queue);
     }
 
 
@@ -2313,7 +2310,7 @@ int main(int argc, const char **argv) {
     //disablePort(&settings, cameraVideoPort, "camera");
     //disablePort(&settings, splitterH264Port, "splitter h264");
     //disablePort(&settings, splitterMjpegPort, "splitter mjpeg");
-    disablePort(&settings, splitterBgrPort, "splitter bgr");
+    disablePort(&settings, splitterYuvPort, "splitter yuv");
     // disabling this causes a segfault ...
     disablePort(&settings, h264EncoderOutputPort, "h264 encoder output");
     disablePort(&settings, mjpegEncoderOutputPort, "mjpeg encoder output");
@@ -2335,13 +2332,13 @@ int main(int argc, const char **argv) {
 
     logInfo("hi 8");
     // TODO: destroy pools?
-    // destroy bgr buffer pool
-    if (handles.bgrPool) {
+    // destroy yuv buffer pool
+    if (handles.yuvPool) {
         if (settings.verbose) {
-            logInfo("Destroying bgr pool");
+            logInfo("Destroying yuv pool");
         }
-        mmal_port_pool_destroy(splitterBgrPort, handles.bgrPool);
-        handles.bgrPool = NULL;
+        mmal_port_pool_destroy(splitterYuvPort, handles.yuvPool);
+        handles.yuvPool = NULL;
     }
     destroySplitter(&handles, &settings);
     destroyCamera(&handles, &settings);
