@@ -1,0 +1,2 @@
+5 0 * * * /home/pimera/pimera/processing/scripts.sh >> /home/user/cron.log 2>&1
+

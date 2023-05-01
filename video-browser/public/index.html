@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Browse Videos</title>
+
+<style>
+html {
+    -webkit-text-size-adjust: 100%;
+}
+html,body,button,input,textarea,div,em,a {
+    box-sizing: border-box;
+    color: #636363;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 1.0em;
+    margin: 0;
+    padding: 0;
+}
+body {
+    margin-top: 50px;
+}
+/*
+* {
+    font-size: 1.05em;
+}
+*/
+
+body, button, input, textarea {
+}
+button, #tags > div {
+    background-color: #f7ca88;
+    border: 0;
+    border-radius: .15em;
+    color: #fff;
+    cursor: pointer;
+    display: inline-block;
+    height: auto;
+    line-height: 1.7em;
+    padding: .3em 1.1em;
+    text-align: center;
+    vertical-align: middle;
+    width: auto;
+}
+button.active, #tags > div.active {
+    background-color: #3372b3;
+}
+input, textarea {
+    background-color: #f5f5f5; /*#fbfbfb;*/
+    color: #636363;
+    border-top: 0px;
+    border-right: 0px;
+    border-bottom: 1px solid #ccc;
+    border-left: 0px;
+    padding: 0.2em;
+}
+input {
+    /* This is to gently nudge the input narrower in the tag list above addNote */
+    min-width: 60px;
+}
+button.notice, #nav > div.notice {
+    background-color: #ff7c39;
+}
+.success, button.save {
+    background-color: #2084e9 !important;
+    color: #fff;
+}
+.disabled {
+    background-color: #ccc !important;
+}
+.smaller {
+    padding: .3em;
+}
+:focus {
+    outline: none;
+}
+
+div.search {
+    background-color: #fbfbfb;
+    color: #636363;
+}
+div.search input {
+    border: 0;
+    width: 100%;
+}
+
+.flex {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    margin: 0;
+    width: auto;
+}
+.flex > * {
+    flex: 1;
+    padding-left:0;
+}
+.flex.one > * {
+    flex: 1 1 100%;
+}
+.flex.three > div {
+    flex: 1 1 33.3333%;
+}
+.flex.four > div {
+    flex: 1 1 25%;
+}
+.flex.five > * {
+    flex: 1 1 20%;
+}
+.flex.six > div {
+    flex: 1 1 16.6666%;
+}
+.flex.seven > div {
+    flex: 1 1 14.2857%;
+}
+.button.smaller {
+    font-size: smaller; /*.75em;*/
+}
+
+.noscroll {
+    overflow: hidden;
+}
+.overlay {
+    background-color: #fff;
+    bottom: 0;
+    display: none;
+    left: 0;
+    overflow-y: scroll;
+    position: fixed;
+    right: 0;
+    top: 0;
+    z-index: 2;
+}
+.container {
+    margin-left: auto;
+    margin-right: auto;
+    max-width: 1000px;
+}
+
+.right {
+    float: right;
+}
+
+.hidden {
+    display: none;
+}
+
+.push {
+    margin-bottom: 10px;
+}
+
+
+.main {
+
+}
+
+.main video {
+    width: 100%;
+}
+.main > div {
+    border: 1px solid #fff;
+    padding: 2px;
+}
+.main > div.selected {
+    background-color: beige;
+}
+
+#nav {
+    background-color: #fff;
+    position: fixed;
+    height: 40px;
+    left: 0;
+    top: 0;
+    width: 100%;
+}
+
+#tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+#tags > div {
+    /*
+    padding: 10px;
+    */
+}
+.tags a {
+    margin-right: 10px;
+}
+
+#preview {
+    background-color: white;
+    display: block;
+    height: 100vw;
+    left: 0px;
+    padding: 5px;
+    position: absolute;
+    top: 0px;
+    width: 100vw;
+    z-index: 10;
+}
+#preview > img {
+    width: 100%;
+}
+
+</style>
+</head>
+<body id="body">
+
+<div id="nav">
+1 - car | 2 - person | 3 - bike | 4 - golf-cart | 5 - scooter
+</div>
+<div id="tags"></div>
+
+<div id="main" class="main" style="display: grid; grid-template-columns: 33% 33% 33%;">
+
+</div>
+<script>
+var ajax = {
+
+    start: function() {
+    },
+    stop: function() {
+    },
+    get: function(url, callback) {
+        var request = new XMLHttpRequest();
+        ajax.start();
+        request.open('GET', url, true);
+
+        request.addEventListener('load', function() {
+            if (request.status >= 200 && request.status < 400) {
+                try {
+                    var data = JSON.parse(request.responseText);
+                    callback(null, data);
+                } catch (e) {
+                    callback("JSON parse: " + e.message);
+                }
+            } else {
+                // We reached our target server, but it returned an error
+                callback('Did not get 20x or 30x HTTP status');
+            }
+            ajax.stop();
+        });
+
+        request.addEventListener('error', function(event) {
+            callback('GET failed. Did we lose connectivity?');
+            ajax.stop();
+        });
+
+        request.send();
+    },
+
+    post: function(url, data, callback) {
+        var request = new XMLHttpRequest();
+        ajax.start();
+        request.open('POST', url, true);
+        request.setRequestHeader('Content-Type', 'application/json; charset=UTF-8');
+        request.addEventListener('load', function() {
+            if (request.status >= 200 && request.status < 400) {
+                // Success!
+                var data = JSON.parse(request.responseText);
+                callback(null, data);
+            } else {
+                // We reached our target server, but it returned an error
+                callback('Did not get 20x or 30x HTTP status');
+            }
+            ajax.stop();
+        });
+
+        request.addEventListener('error', function(event) {
+            callback('POST failed. Did we lose connectivity?');
+            ajax.stop();
+        });
+        request.send(JSON.stringify(data));
+    }
+};
+
+var drawChildren = function(container, children) {
+    /*
+    More room for cool optimizations here:
+    - loop through current and desired children, compare using node types, merge differences if possible
+    */
+    // perhaps compare element ids
+
+    while (container.firstChild) {
+        container.removeChild(container.firstChild);
+    }
+    children.forEach(function(item) {
+        if (item == null) {
+            return;
+        }
+        container.appendChild(item);
+    });
+};
+
+/*
+var tag = function(tagName, attributes) {
+    var args = Array.prototype.slice.call(arguments);
+    tagName = args.shift();
+    attributes = args.shift();
+
+    var element = document.createElement(tagName);
+    for (var i in attributes) {
+        element.setAttribute(i, attributes[i]);
+    }
+    // Convert text to text node
+    for (var i = 0; i < args.length; i ++) {
+        var node = args[i];
+        if (node == null) {
+            continue;
+        } else if (node instanceof Node) {
+        } else {
+            node = document.createTextNode(args[i]);
+        }
+        element.appendChild(node);
+    }
+
+    return element;
+};
+*/
+var tag = function(tagName, attributes, children) {
+    var element = document.createElement(tagName);
+    for (var i in attributes) {
+        element.setAttribute(i, attributes[i]);
+    }
+    // Convert text to text node
+    for (var i = 0; i < children.length; i ++) {
+        var node = children[i];
+        if (node == null) {
+            continue;
+        } else if (node instanceof Node) {
+        } else {
+            node = document.createTextNode(node);
+        }
+        element.appendChild(node);
+    }
+
+    return element;
+};
+
+var handles = {
+    body: document.body,
+    videos: document.getElementById('main'),
+    tags: document.getElementById('tags'),
+
+    preview: null
+};
+
+/*
+KEYBOARD INPUT THOUGHTS
+
+* would like left right arrow keys to work as seek
+* page up down as faster seek
+
+Questions
+
+* What should advance to next/previous video? up and down arrow keys?
+
+*/
+var handlers = {
+    keydown: {
+        body: function(e) {
+            console.log(e)
+            // left arrow
+            switch (e.key) {
+                // backspace
+                case 'Backspace':
+                    e.preventDefault();
+                    e.stopPropagation();
+                    archive();
+                    break;
+                // space functionality should happen naturally, but we need to make sure we set the focus
+                case ' ':
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (currentlyPlaying) {
+                        if (currentlyPlaying.paused) {
+                            currentlyPlaying.play();
+                        } else {
+                            currentlyPlaying.pause();
+                        }
+                    }
+                    break;
+                // left arrow
+                case 'h':
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    rewind();
+                    break;
+                // page up
+                case 'H':
+                    e.preventDefault();
+                    rewind(true);
+                    break;
+                // right arrow
+                case 'l':
+                case 'ArrowRight':
+                    e.preventDefault();
+                    forward();
+                    break;
+                // page down
+                case 'L':
+                    e.preventDefault();
+                    forward(true);
+                    break;
+                // k key. VIM up, previous video
+                case 'k':
+                    e.preventDefault();
+                    prev();
+                    break;
+                // j key. VIM down, next video)
+                case 'j':
+                    e.preventDefault();
+                    next();
+                    break;
+                
+
+                // TAGS
+                /*
+                case '1':
+                    tagVideo(1);
+                    break;
+                case '2':
+                    tagVideo(2);
+                    break;
+                case '3':
+                    tagVideo(3);
+                    break;
+                case '4':
+                    tagVideo(4);
+                    break;
+                case '5':
+                    tagVideo(5);
+                    break;
+                    */
+                
+                case 'Escape':
+                    if (handles.preview) {
+                        handles.preview.remove();
+                        handles.preview = null;
+                    }
+                    break;
+                default:
+                    console.log(e.keyCode);
+                    
+            }
+        }
+    },
+
+    click: {
+        main: function(e) {
+            if (e.target.tagName == 'A') {
+                var el = e.target;
+                e.preventDefault();
+                console.log('link');
+                handles.preview = tag(
+                    'DIV',
+                    {
+                        id: 'preview',
+                        style: 'top: ' + window.scrollY + 'px'
+                    },
+                    [
+                        tag('IMG', {src: el.getAttribute('href')}, [])
+                    ]
+                );
+                handles.body.appendChild(handles.preview);
+            }
+            if (e.target.tagName == 'VIDEO') {
+                e.target.play();
+            }
+            console.log(e.target);
+        }
+    },
+    // hmm, this doesn't quite work. when controls show, they capture the click to play
+    mouseover: {
+        main: function(e) {
+            if (e.target.tagName == 'VIDEO') {
+                e.target.setAttribute('controls', 'controls');
+            }
+        }
+    },
+    mouseout: {
+        main: function(e) {
+            if (e.target.tagName == 'VIDEO') {
+                e.target.removeAttribute('controls');
+            }
+        }
+    }
+};
+// Attach the above handlers
+for (var event in handlers) {
+    var ids = handlers[event];
+    for (var id in ids) {
+        document.getElementById(id).addEventListener(event, ids[id]);
+    }
+}
+
+handles.tags.addEventListener('click', function(event) {
+    var action = event.target.getAttribute('data-action');
+    if (action in videos) {
+        videos[action](event);
+    }
+});
+
+
+
+// CONVERT THE VIDEOS JSON INTO DIV AND VIDEO TAGS
+let listeners = {
+    ended: function(e) {
+        console.log(e);
+        // go to next
+        next();
+    },
+    loadedmetadata: function(e) {
+        videos.loadIndex++;
+        videos.loadMeta();
+    },
+    error: function(e) {
+        videos.loadIndex++;
+        videos.loadMeta();
+    },
+    playing: function(e) {
+        console.log(e);
+        // remove all other borders
+        for (let vid of document.getElementsByTagName('video')) {
+            vid.parentNode.classList.remove('selected');
+        }
+
+        e.target.parentNode.classList.add('selected');
+        currentlyPlaying = e.target;
+    },
+    keys: function(e) {
+        e.preventDefault();
+    }
+};
+var videos = {
+    offset: 0,
+    limit: 51,
+    items: 0,
+    loadIndex: 0,
+    tagIds: new Set(),
+
+    init: function() {
+        this.loadTags();
+
+        let tags = [];
+        for (let i = 0; i < videos.limit; i++) {
+            var videoTag = tag(
+                'video',
+                //{'preload': 'metadata', 'controls': 'controls', 'data-src': '', 'data-id': ''},
+                {'preload': 'metadata', 'data-src': '', 'data-id': ''},
+                []
+            );
+            /*
+            Relevant events
+            canplay
+            complete
+            ended
+            loadeddata
+            loadedmetadata
+            pause
+            play
+            playing
+            */
+            videoTag.addEventListener('ended', listeners.ended);
+            videoTag.addEventListener('loadedmetadata', listeners.loadedmetadata);
+            videoTag.addEventListener('error', listeners.error);
+            videoTag.addEventListener('playing', listeners.playing);
+            videoTag.addEventListener('keydown', listeners.keys);
+            videoTag.addEventListener('keyup', listeners.keys);
+            tags.push(
+                tag('div',
+                    {},
+                    [
+                        videoTag,
+                        tag('div', {}, []),
+                        tag('div', {class: 'tags'}, [])
+                    ]     
+                )
+            );
+        }
+        drawChildren(handles.videos, tags);
+    },
+    loadTags: function() {
+        let self = this;
+        let tagIds = self.tagIds.size ? '?tagIds=' + Array.from(self.tagIds).join(',') : '';
+        ajax.get('/api/tags' + tagIds, function(error, data) {
+            if (error) {
+                console.log(error);
+                return;
+            }
+            var tags = [
+                tag(
+                    'div',
+                    {'data-action': 'previous'},
+                    ['prev']
+                ),
+                tag(
+                    'div',
+                    {'data-action': 'next'},
+                    ['next']
+                ),
+                tag(
+                    'div',
+                    {'data-action': 'anyTag'},
+                    ['ANY']
+                ),
+                tag(
+                    'div',
+                    {'data-action': 'noTags'},
+                    ['NONE']
+                )
+            ];
+            for (var i in data) {
+                var t = data[i];
+                
+                tags.push(
+                    tag(
+                        'div',
+                        {
+                            'data-id': t.id,
+                            'data-action': 'filterByTag',
+                            'class': self.tagIds.has(t.id) ? 'active' : ''
+                        },
+                        [t.tag + ' (' + t.count + ')']
+                    )
+                );
+            }
+            drawChildren(handles.tags, tags);
+        });
+
+    },
+
+    load: function() {
+        var self = this;
+        var url = '/api/files?offset=' + self.offset + '&limit=' + self.limit;
+        if (self.tagId != 0) {
+            // tagId of -1 returns videos that don't have an tags
+            //url += '&tagId=' + self.tagId;
+            url += '&tagIds=' + Array.from(self.tagIds).join(',');
+        }
+        // Cancel previous video loading that loadMetaData() is doing
+
+        // Fill with video tags if not already there
+
+        ajax.get(url, function(error, files) {
+            if (error) {
+                console.log(error);
+                return;
+            }
+
+            // this pauses loading
+            videos.loadIndex = videos.limit;
+            videos.items = files.length;
+
+            // loop through video tags, shift file off files
+            // update attributes
+            // push video tag onto queue
+            handles.videos.childNodes.forEach(function(videoContainer, index) {
+                if (files.length > 0) {
+                    let video = files.shift();
+                    let videoTag = videoContainer.childNodes[0];
+                    let videoName = videoContainer.childNodes[1];
+                    videoTag.setAttribute('data-id', video.id);
+                    videoTag.setAttribute('data-src', '/movies' + video.path);
+                    videoName.innerText = video.filename;
+                    videoContainer.style.display = 'block';
+                    var tags2 = [];
+                    for (let j = 0; j < video.tags.length; j++) {
+                        var tagName = video.tags[j];
+                        var tagImage = video.path.replace(/\/[0-9]{8}/, '').replace('.mp4', '');
+                        tags2.push(
+                            tag(
+                                'A',
+                                {href: '/images' + tagImage + '_' + tagName + '.jpg'},
+                                ['#' + tagName]
+                            )
+                        );
+                    }
+                    drawChildren(videoContainer.querySelectorAll('.tags')[0], tags2);
+                } else {
+                    // hide this tag
+                    videoContainer.style.display = 'none';
+                    console.log('hding');
+                }
+            });
+            videos.loadIndex = 0;
+            videos.loadMeta();
+        });
+    },
+
+    loadMeta: function() {
+        if (videos.items < videos.loadIndex) {
+            return;
+        }
+        if (videos.loadIndex >= videos.limit) {
+            return;
+        }
+        var videoContainer = handles.videos.childNodes[ videos.loadIndex ];
+        let videoTag = videoContainer.childNodes[0];
+        videoTag.src = videoTag.getAttribute('data-src');
+    },
+
+    anyTag: function(e) {
+        videos.offset = 0;
+        videos.tagId = 0;
+        videos.load();
+    },
+    noTags: function(e) {
+        videos.offset = 0;
+        videos.tagId = -1;
+        videos.load();
+    },
+    filterByTag: function(e) {
+        // toggle
+        // check state, add or remove from filter list as appropriate
+        let tagId = parseInt(e.target.getAttribute('data-id'));
+        e.target.classList.toggle('active');
+        videos.tagIds.delete(tagId);
+        if (e.target.classList.contains('active')) {
+            videos.tagIds.add(tagId);
+        }
+        videos.offset = 0;
+        //videos.tagId = e.target.getAttribute('data-id');
+        videos.loadTags();
+        videos.load();
+    },
+    previous: function(e) {
+        videos.offset -= videos.limit;
+        if (videos.offset < 0) {
+            videos.offset = 0;
+        }
+        videos.load();
+    },
+    next: function(e) {
+        videos.offset += videos.limit;
+        videos.load();
+    }
+};
+
+
+
+
+var currentlyPlaying;
+
+var prev = function() {
+    var temp;
+    if (currentlyPlaying) {
+        currentlyPlaying.pause();
+
+        if (
+            currentlyPlaying.parentNode.previousElementSibling
+            &&
+            currentlyPlaying.parentNode.previousElementSibling.childNodes[0]) {
+            // assuming it's loaded
+            currentlyPlaying = currentlyPlaying.parentNode.previousElementSibling.childNodes[0];
+            currentlyPlaying.focus();
+            currentlyPlaying.play();
+        }
+
+    }
+};
+
+var next = function() {
+    if (currentlyPlaying) {
+        currentlyPlaying.pause();
+        
+        if (currentlyPlaying.parentNode.nextElementSibling
+            &&
+            currentlyPlaying.parentNode.nextElementSibling.childNodes[0]) {
+            currentlyPlaying = currentlyPlaying.parentNode.nextElementSibling.childNodes[0];
+            currentlyPlaying.focus();
+            currentlyPlaying.play();
+        }
+    } else {
+        // nothing current, start at the first video
+        var tags = handles.videos.querySelectorAll('div');
+        if (tags.length > 0) {
+            tags[0].childNodes[0].play();
+        }
+    }
+};
+
+var rewind = function(big) {
+    if (currentlyPlaying) {
+        var offset = big ? 20.0 : 5.0;
+        //currentlyPlaying.fastSeek( currentlyPlaying.currentTime - offset);
+        currentlyPlaying.currentTime -= offset;
+    }
+};
+var forward = function(big) {
+    if (currentlyPlaying) {
+        var offset = big ? 20.0 : 5.0;
+        //currentlyPlaying.fastSeek( currentlyPlaying.currentTime + offset);
+        currentlyPlaying.currentTime += offset;
+    }
+};
+
+var archive = function() {
+    if (currentlyPlaying) {
+        var id = currentlyPlaying.getAttribute('data-id');
+        ajax.post('/api/video/archive/' + encodeURIComponent(id), {}, function(error) {
+            if (error) {
+                console.log(error);
+                return;
+            }
+            var el = currentlyPlaying;
+            next();
+            el.parentNode.remove();
+        });
+    }
+};
+
+var tagVideo = function(tagId) {
+    if (currentlyPlaying) {
+        var id = currentlyPlaying.getAttribute('data-id');
+        ajax.post('/api/video/tag/' + encodeURIComponent(id), {tagId: tagId}, function(error, data) {
+            if (error) {
+                console.log(error);
+                return;
+            }
+            var tags;
+            if (data.tags) {
+                tags = '#' + data.tags.join(' #');
+            }
+            currentlyPlaying.parentNode.querySelectorAll('.tags')[0].innerText = tags;
+        });
+    }
+};
+
+videos.init();
+//videos.load();
+
+</script>
+</body>
+</html>
