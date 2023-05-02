@@ -6,12 +6,12 @@ import re
 import mysql.connector
 import sys
 
-fp = open('config.json', 'r')
+fp = open('../config.json', 'r')
 config = json.load(fp)
 
 print(sys.argv[1])
 
-my = mysql.connector.connect(user=config.username, password=config.password, host=config.host, database=config.database)
+my = mysql.connector.connect(user=config['username'], password=config['password'], host=config['host'], database=config['database'])
 c = my.cursor()
 
 

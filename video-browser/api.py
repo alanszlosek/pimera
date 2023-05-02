@@ -19,9 +19,6 @@ import os
 import re
 import time
 
-fp = open('config.json', 'r')
-config = json.load(fp)
-
 # i dont remember how this works
 offsetPath = '/home/user/projects/surveillance-ui/public'
 offsetPath = '/mnt/media/surveillance'
@@ -29,6 +26,8 @@ offsetPath = '/mnt/media/surveillance'
 app = Flask(__name__)
 
 def get_db():
+    fp = open('../config.json', 'r')
+    config = json.load(fp)
     return mysql.connector.connect(user=config.username, password=config.password, host=config.host, database=config.database)
     #return sqlite3.connect('/home/user/projects/surveillance-videos/files.sqlite3')
 
@@ -55,7 +54,7 @@ def getTags():
             num = len(tags.split(','))
             print(tags)
 
-            query = 'SELECT t.id,t.tag, count(vt.tagId) as cnt FROM video_tag AS vt LEFT JOIN tags AS t ON (vt.tagId=t.id) WHERE vt.videoId IN (SELECT vt2.videoId FROM video_tag AS vt2 WHERE vt2.tagId IN (%s) GROUP BY vt2.videoId HAVING count(vt2.videoId)=%d) AND vt.tagId NOT IN (%s) GROUP BY vt.tagId UNION SELECT id,tag,0 as cnt FROM tags' % (tags,num,tags)
+            query = 'SELECT t.id,t.tag, count(vt.tagId) as cnt FROM video_tag AS vt LEFT JOIN tags AS t ON (vt.tagId=t.id) WHERE vt.videoId IN (SELECT vt2.videoId FROM video_tag AS vt2 WHERE vt2.tagId IN (%s) GROUP BY vt2.videoId HAVING count(vt2.videoId)=%d) GROUP BY vt.tagId UNION SELECT id,tag,0 as cnt FROM tags' % (tags,num)
             c.execute(query)
             tag_dict = {}
             for row in c:
@@ -120,7 +119,7 @@ def getFiles():
 
     if 'tagIds' in request.args:
         tags = request.args['tagIds']
-        if tags != '-1':
+        if tags != 'NONE':
             if re.fullmatch('^[0-9]+(,[0-9]+)*$', tags):
                 num = len(tags.split(','))
                 c.execute('SELECT id,path,createdAt FROM videos WHERE status=0 AND id IN (SELECT videoId FROM video_tag WHERE tagId IN (%s) GROUP BY videoId HAVING count(tagId)=%%s ) ORDER BY createdAt DESC LIMIT %%s,%%s' % (tags,), (num, offset, limit))

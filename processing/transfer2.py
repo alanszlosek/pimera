@@ -1,14 +1,17 @@
 import datetime
 import hashlib
+import json
 import os
 import re
 import mysql.connector
 import sqlite3
 import sys
 
+fp = open('../config.json', 'r')
+config = json.load(fp)
 
 sqlite = sqlite3.connect('/home/user/projects/pimera/files.sqlite3')
-my = mysql.connector.connect(user='pimera', password='pimera', host='192.168.1.173', database='pimera')
+my = mysql.connector.connect(user=config['username'], password=config['password'], host=config['host'], database=config['database'])
 m = my.cursor()
 
 s = sqlite.cursor()
