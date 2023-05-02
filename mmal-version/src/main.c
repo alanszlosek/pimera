@@ -1044,12 +1044,6 @@ void mjpegCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         return;
     }
 
-    //fprintf(stdout, "mjpeg pts: %" PRId64 "\n", buffer->pts);
-    
-
-    //logInfo("Buffer with mjpeg data!");
-    //fprintf(stdout, "[INFO] mjpeg buffer length %d\n", buffer->length);
-
     if (frame_counter >= stream_threshold) {
         stream_threshold = frame_counter + motionDetection.stream_sleep;
 
@@ -1206,6 +1200,7 @@ static MMAL_STATUS_T createH264Encoder(HANDLES *handles, SETTINGS *settings) {
     video_profile.profile[0].profile = MMAL_VIDEO_PROFILE_H264_HIGH;
     video_profile.profile[0].level = MMAL_VIDEO_LEVEL_H264_4;
 
+    // From RaspiVid.c
     /*
     if((VCOS_ALIGN_UP(settings->width,16) >> 4) * (VCOS_ALIGN_UP(settings->height,16) >> 4) * settings->h264.fps > 245760) {
         logInfo("Here");
@@ -1268,6 +1263,23 @@ void sendH264Buffers(MMAL_PORT_T* port, CALLBACK_USERDATA* userdata) {
     }
 }
 
+void h264BufferDebug(MMAL_BUFFER_HEADER_T* buffer) {
+    fprintf(
+        stdout, "[INFO] frame flags: %8s %8s %8s %8s %12s %10s %10s %10s %8s %10d %10d\n",
+        (buffer->flags & MMAL_BUFFER_HEADER_FLAG_EOS) ? "eos" : "!eos",
+        (buffer->flags & MMAL_BUFFER_HEADER_FLAG_FRAME_START) ? "start" : "!start",
+        (buffer->flags & MMAL_BUFFER_HEADER_FLAG_FRAME_END) ? "end" : "!end",
+        (buffer->flags & MMAL_BUFFER_HEADER_FLAG_FRAME) ? "frame" : "!frame",
+        (buffer->flags & MMAL_BUFFER_HEADER_FLAG_KEYFRAME) ? "keyframe" : "!keyframe",
+        (buffer->flags & MMAL_BUFFER_HEADER_FLAG_CONFIG) ? "config" : "!config",
+        (buffer->flags & MMAL_BUFFER_HEADER_FLAG_CODECSIDEINFO) ? "sideinfo" : "!sideinfo",
+        (buffer->flags & MMAL_BUFFER_HEADER_FLAG_NAL_END) ? "nalend" : "!nalend",
+        (buffer->pts != MMAL_TIME_UNKNOWN) ? "pts" : "!pts",
+        buffer->offset,
+        buffer->length
+    );
+}
+
 bool saving = 0;
 char h264FileKickoff[128];
 uint32_t h264FileKickoffLength;
@@ -1295,16 +1307,16 @@ void h264Callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         debug = settings->debug;
     }
 
-    //logInfo("got h264");
+    h264BufferDebug(buffer);
 
     if (buffer->cmd) {
         logInfo("Found cmd in h264 buffer. Releasing");
         mmal_buffer_header_release(buffer);
         sendH264Buffers(port, userdata);
 
-	pthread_mutex_lock(&h264_concurrent_mutex);
-	h264_concurrent--;
-	pthread_mutex_unlock(&h264_concurrent_mutex);
+        pthread_mutex_lock(&h264_concurrent_mutex);
+        h264_concurrent--;
+        pthread_mutex_unlock(&h264_concurrent_mutex);
         return;
     }
     // is this necessary during shutdown to prevent a bunch of callbacks with messed up data?
@@ -1312,33 +1324,15 @@ void h264Callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         mmal_buffer_header_release(buffer);
         sendH264Buffers(port, userdata);
 
-	pthread_mutex_lock(&h264_concurrent_mutex);
-	h264_concurrent--;
-	pthread_mutex_unlock(&h264_concurrent_mutex);
+        pthread_mutex_lock(&h264_concurrent_mutex);
+        h264_concurrent--;
+        pthread_mutex_unlock(&h264_concurrent_mutex);
         return;
     }
-
-    //fprintf(stdout, "h264 pts: %" PRId64 "\n", buffer->pts);
     
     // TODO: concat this buffer with previous one containing timestamp
     // see here: https://forums.raspberrypi.com/viewtopic.php?t=220074
 
-
-    if (debug) {
-        fprintf(
-            stdout, "[INFO] frame flags: %8s %8s %8s %8s %10s %10s %10s %10s %10d %10d\n",
-            (buffer->flags & MMAL_BUFFER_HEADER_FLAG_EOS) ? "eos" : "!eos",
-            (buffer->flags & MMAL_BUFFER_HEADER_FLAG_FRAME_START) ? "start" : "!start",
-            (buffer->flags & MMAL_BUFFER_HEADER_FLAG_FRAME_END) ? "end" : "!end",
-            (buffer->flags & MMAL_BUFFER_HEADER_FLAG_FRAME) ? "frame" : "!frame",
-            (buffer->flags & MMAL_BUFFER_HEADER_FLAG_KEYFRAME) ? "keyframe" : "!keyframe",
-            (buffer->flags & MMAL_BUFFER_HEADER_FLAG_CONFIG) ? "config" : "!config",
-            (buffer->flags & MMAL_BUFFER_HEADER_FLAG_CODECSIDEINFO) ? "sideinfo" : "!sideinfo",
-            (buffer->flags & MMAL_BUFFER_HEADER_FLAG_NAL_END) ? "nalend" : "!nalend",
-            buffer->offset,
-            buffer->length
-        );
-    }
     
 
     if (buffer->flags & MMAL_BUFFER_HEADER_FLAG_CONFIG) {
@@ -1348,7 +1342,6 @@ void h264Callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         if (buffer->length > 128) {
             logError("Not enough space in h264_file_kickoff", __func__);
         } else {
-            logInfo("Keeping h264 config data for later");
             //pthread_mutex_lock(&userdataMutex);
             mmal_buffer_header_mem_lock(buffer);
             memcpy(h264FileKickoff, buffer->data, buffer->length);
@@ -1359,9 +1352,9 @@ void h264Callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
 
         sendH264Buffers(port, userdata);
 
-	pthread_mutex_lock(&h264_concurrent_mutex);
-	h264_concurrent--;
-	pthread_mutex_unlock(&h264_concurrent_mutex);
+        pthread_mutex_lock(&h264_concurrent_mutex);
+        h264_concurrent--;
+        pthread_mutex_unlock(&h264_concurrent_mutex);
         return;
     }
 
@@ -1375,7 +1368,12 @@ void h264Callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         if (motionDetection.motion_count) {
             // leave open
 
-        } else {
+        // only close once we see an end of the frame of data,
+        // otherwise may have corrupt video files. sadly, still seeing
+        // this from ffmpeg: "[h264 @ 0x5583838594c0] error while decoding MB 6 20, bytestream -22"
+        } else if (buffer->flags & MMAL_BUFFER_HEADER_FLAG_FRAME_END) {
+            // TODO: do i need to wait for a certain type of data before closing?
+
             // save then close
             logInfo("CLOSING %s\n", motionDetection.filename1);
             close(motionDetection.fd);
@@ -1390,6 +1388,7 @@ void h264Callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     } else {
 
         if (buffer->flags & MMAL_BUFFER_HEADER_FLAG_KEYFRAME) {
+            //h264BufferDebug(buffer);
             // if first keyframe buffer, which should have pts
             if (buffer->pts != MMAL_TIME_UNKNOWN) {
                 // keyframe might have invalid pts if frame data is split across more than 1 buffer
@@ -1508,8 +1507,6 @@ void yuvCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     stats.fps++;
     pthread_mutex_unlock(&statsMutex);
 
-    // fprintf(stdout, "yuv pts: %" PRId64 "\n", buffer->pts);
-
     // Does buffer have data?
     if (frame_counter == 1) {
         mmal_buffer_header_mem_lock(buffer);
@@ -1595,10 +1592,9 @@ static void http_server_thread_cleanup(void *arg) {
 
     logInfo("HTTP Server thread closing down");
     for (int i = 0; i < http_fds_count; i++) {
-        printf("Closing %d\n", http_fds[i].fd);
+        logInfo("Closing %d", http_fds[i].fd);
         close(http_fds[i].fd);
     }
-
 
     pthread_mutex_lock(&stream_connections_mutex);
     clear_connections(stream_connections);
@@ -1718,9 +1714,9 @@ static void *httpServer(void *v) {
                         // send motion pixels as mjpeg
                         ret = sendSocket(http_fds[i].fd, response_header, response_header_length);
 
-                        pthread_mutex_lock(&stream_connections_mutex);
+                        pthread_mutex_lock(&motion_connections_mutex);
                         LL_APPEND(motion_connections, create_connection( http_fds[i].fd ));
-                        pthread_mutex_unlock(&stream_connections_mutex);
+                        pthread_mutex_unlock(&motion_connections_mutex);
                     
                     } else if (strncmp(request, "GET /status.json HTTP", 21) == 0) {
                         response2_length = snprintf(response2, response2_max, "{\"width\": \"%d\", \"height\":\"%d\"}", settings->width, settings->height);
@@ -1774,7 +1770,7 @@ static void *httpServer(void *v) {
                 socketfd = accept(listener, NULL, 0); //, (struct sockaddr *)&cli_addr, &length);
                 if (http_fds_count < MAX_POLL_FDS) {
                     if (socketfd < 0) {
-                        fprintf(stdout, "Failed to accept: %d\n", errno);
+                        logInfo("Failed to accept: %d", errno);
                         pthread_mutex_lock(&running_mutex);
                         r = running;
                         pthread_mutex_unlock(&running_mutex);
@@ -1782,13 +1778,12 @@ static void *httpServer(void *v) {
                         // and perhaps re-listen?
                         break;
                     }
-                    printf("Accepted: %d\n", socketfd);
 
                     http_fds[http_fds_count].fd = socketfd;
                     http_fds[http_fds_count].events = POLLIN;
                     http_fds_count++;
                 } else {
-                    printf("CANNOT ACCEPT CONNECTION, CLOSING\n");
+                    logError("Cannot accept connection. Closing", __func__);
                     close(socketfd);
                 }
 
@@ -1819,7 +1814,7 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
     int cpuFd;
     char sTemperature[30];
     int iTemperature;
-    char metric[200];
+    char metric[501];
     char hostname[100];
 
     struct timespec uptime;
@@ -1838,7 +1833,7 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
     // TODO: do we need to re-run these two blocks every time?
     // as the os to fill in addrinfo data for the host and port we want to send to
     if ((rv = getaddrinfo("192.168.1.173", "5001", &hints, &heartbeatAddr)) != 0) {
-        fprintf(stdout, "[ERR] Failed to getaddrinfo for heartbeat server: %s\n", gai_strerror(rv));
+        logInfo("Failed to getaddrinfo for heartbeat server: %s", gai_strerror(rv));
         return;
     }
 
@@ -1849,7 +1844,7 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
 
     // Temperature metrics server info
     if ((rv = getaddrinfo("192.168.1.173", "8125", &hints, &temperatureAddr)) != 0) {
-        fprintf(stdout, "[ERR] Failed to getaddrinfo for temperature metrics server: %s\n", gai_strerror(rv));
+        logInfo("Failed to getaddrinfo for temperature metrics server: %s", gai_strerror(rv));
         return;
     }
 
@@ -1908,6 +1903,7 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
     time_t previousSeconds = 0;
     struct timespec delta;
     while (r) {
+        uint8_t fps;
         clock_gettime(CLOCK_REALTIME, &delta);
 
         if (previousSeconds == delta.tv_sec) {
@@ -1917,9 +1913,10 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
         previousSeconds = delta.tv_sec;
 
         pthread_mutex_lock(&statsMutex);
-        logInfo("STATS. FPS: %d", stats.fps);
+        fps = stats.fps;
         stats.fps = 0;
         pthread_mutex_unlock(&statsMutex);
+        logInfo("STATS. FPS: %d", fps);
 
         // update time annotation when second has changed
         time(&rawtime);
@@ -1929,13 +1926,13 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
         annotate.text[MMAL_CAMERA_ANNOTATE_MAX_TEXT_LEN_V3 - 1] = '\0';
         status = mmal_port_parameter_set(handles->camera->control, &annotate.hdr);
         if (status != MMAL_SUCCESS) {
-            fprintf(stdout, "FAILED TO SET TIME %d\n", status);
+            logError("Failed to set annotation", __func__);
         }
 
 
         // send heartbeat once per second
         if ((numbytes = sendto(sockfd, "hi", 2, 0, heartbeatAddr->ai_addr, heartbeatAddr->ai_addrlen)) == -1) {
-            fprintf(stderr, "Failed to send udp heartbeat. errno: %d\n", errno);
+            logInfo("Failed to send udp heartbeat. errno: %d", errno);
         }
 
         // read CPU/GPU temperature every 10 seconds
@@ -1947,7 +1944,12 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
         if (tenIterations == 0) {
             // Send uptime metric
             clock_gettime(CLOCK_REALTIME, &uptime);
-            numbytes = snprintf(metric, 200, "raspi.pimera.seconds,host=%s:%ld|g", hostname, uptime.tv_sec - start);
+            numbytes = snprintf(
+                metric,
+                500,
+                "raspi.pimera.seconds,host=%s:%ld|g\nraspi.pimera.fps,host=%s:%d|g",
+                hostname, uptime.tv_sec - start,
+                hostname, fps);
             if ((numbytes = sendto(sockfd, metric, numbytes, 0, temperatureAddr->ai_addr, temperatureAddr->ai_addrlen)) == -1) {
                 logError("Failed to send pimera uptime", __func__);
             }
@@ -2044,7 +2046,8 @@ int main(int argc, const char **argv) {
         (settings.h264.fps * 2);
     h264_buffer = (uint8_t*) malloc(h264_buffer_size);
     if (!h264_buffer) {
-        fprintf(stderr, "FAILED TO ALLOCATE H264 BUFFER OF SIZE %u\n", h264_buffer_size);
+        logError("FAILED TO ALLOCATE H264 BUFFER", __func__);
+        // OF SIZE %u\n", h264_buffer_size);
     }
     
 
