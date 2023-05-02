@@ -14,6 +14,7 @@ html,body,button,input,textarea,div,em,a {
     color: #636363;
     font-family: Arial, Helvetica, sans-serif;
     font-size: 1.0em;
+    font-weight: normal;
     margin: 0;
     padding: 0;
 }
@@ -30,7 +31,7 @@ body, button, input, textarea {
 }
 button, #tags > div {
     background-color: #f7ca88;
-    border: 0;
+    border: 1px solid;
     border-radius: .15em;
     color: #fff;
     cursor: pointer;
@@ -44,6 +45,11 @@ button, #tags > div {
 }
 button.active, #tags > div.active {
     background-color: #3372b3;
+}
+button.disabled, #tags > div.disabled {
+    background-color: #eee;
+    border: 1px dashed;
+    color: black;
 }
 input, textarea {
     background-color: #f5f5f5; /*#fbfbfb;*/
@@ -151,7 +157,13 @@ div.search input {
 
 
 .main {
-
+    display: grid;
+    grid-template-columns: 33% 33% 33%;
+}
+@media screen and (min-width: 370px) {
+    .main {
+        grid-template-columns: 50% 50%;
+    }
 }
 
 .main video {
@@ -163,6 +175,9 @@ div.search input {
 }
 .main > div.selected {
     background-color: beige;
+}
+.main div {
+    overflow-wrap:break-word;
 }
 
 #nav {
@@ -212,7 +227,7 @@ div.search input {
 </div>
 <div id="tags"></div>
 
-<div id="main" class="main" style="display: grid; grid-template-columns: 33% 33% 33%;">
+<div id="main" class="main">
 
 </div>
 <script>
@@ -463,6 +478,10 @@ var handlers = {
                         tag('IMG', {src: el.getAttribute('href')}, [])
                     ]
                 );
+                handles.preview.addEventListener('click', function(el) {
+                    handles.preview.remove();
+                    handles.preview = null;
+                });
                 handles.body.appendChild(handles.preview);
             }
             if (e.target.tagName == 'VIDEO') {
@@ -575,7 +594,7 @@ var videos = {
                         videoTag,
                         tag('div', {}, []),
                         tag('div', {class: 'tags'}, [])
-                    ]     
+                    ]
                 )
             );
         }
@@ -602,17 +621,24 @@ var videos = {
                 ),
                 tag(
                     'div',
-                    {'data-action': 'anyTag'},
+                    {'data-action': 'anyTag', 'data-id': 'ANY', 'class': (videos.tagIds.size == 0 ? 'active' : '')},
                     ['ANY']
                 ),
                 tag(
                     'div',
-                    {'data-action': 'noTags'},
+                    {'data-action': 'noTags', 'data-id': 'NONE', 'class': (videos.tagIds.has('NONE') ? 'active' : '')},
                     ['NONE']
                 )
             ];
             for (var i in data) {
                 var t = data[i];
+
+                let className;
+                if (self.tagIds.has(t.id)) {
+                    className = 'active';
+                } else if (t.count == 0) {
+                    className = 'disabled';
+                }
                 
                 tags.push(
                     tag(
@@ -620,7 +646,7 @@ var videos = {
                         {
                             'data-id': t.id,
                             'data-action': 'filterByTag',
-                            'class': self.tagIds.has(t.id) ? 'active' : ''
+                            'class': className
                         },
                         [t.tag + ' (' + t.count + ')']
                     )
@@ -661,18 +687,20 @@ var videos = {
                     let video = files.shift();
                     let videoTag = videoContainer.childNodes[0];
                     let videoName = videoContainer.childNodes[1];
+                    let videoImagePrefix = video.path.replace(/\/[0-9]{8}/, '').replace('.mp4', '');
+
                     videoTag.setAttribute('data-id', video.id);
                     videoTag.setAttribute('data-src', '/movies' + video.path);
+                    videoTag.setAttribute('poster', '/images' + videoImagePrefix + '.jpg');
                     videoName.innerText = video.filename;
                     videoContainer.style.display = 'block';
                     var tags2 = [];
                     for (let j = 0; j < video.tags.length; j++) {
                         var tagName = video.tags[j];
-                        var tagImage = video.path.replace(/\/[0-9]{8}/, '').replace('.mp4', '');
                         tags2.push(
                             tag(
                                 'A',
-                                {href: '/images' + tagImage + '_' + tagName + '.jpg'},
+                                {href: '/images' + videoImagePrefix + '_' + tagName + '.jpg'},
                                 ['#' + tagName]
                             )
                         );
@@ -703,12 +731,22 @@ var videos = {
 
     anyTag: function(e) {
         videos.offset = 0;
-        videos.tagId = 0;
+        videos.tagIds.clear();
+        videos.loadTags();
         videos.load();
     },
     noTags: function(e) {
+        let tagId = parseInt(e.target.getAttribute('data-id'));
+        e.target.classList.toggle('active');
+        videos.tagIds.delete(tagId);
+        if (e.target.classList.contains('active')) {
+            videos.tagIds.add(tagId);
+        }
         videos.offset = 0;
-        videos.tagId = -1;
+
+        videos.tagIds.clear();
+        videos.tagIds.add('NONE');
+        videos.loadTags();
         videos.load();
     },
     filterByTag: function(e) {
