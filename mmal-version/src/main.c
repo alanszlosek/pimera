@@ -51,7 +51,7 @@
 #define H264_BITRATE  25000000 // 62.5Mbit/s OR 25000000 25Mbits/s
 #define FRAME_ANNOTATION_TEXT_SIZE 24
 
-
+#define DEBUG 1
 
 typedef struct {
     int detection_sleep;
@@ -140,6 +140,8 @@ int http_fds_count = 0;
 
 typedef struct HANDLES_S HANDLES;
 typedef struct SETTINGS_S SETTINGS;
+typedef struct H264_SETTINGS_S H264_SETTINGS;
+typedef struct MJPEG_SETTINGS_S MJPEG_SETTINGS;
 
 // https://stackoverflow.com/questions/1675351/typedef-struct-vs-struct-definitions/
 typedef struct {
@@ -150,26 +152,32 @@ typedef struct {
     int abort;
 } CALLBACK_USERDATA;
 
+struct H264_SETTINGS_S {
+    unsigned int width;
+    unsigned int height;
+    int vcosWidth;
+    int vcosHeight;
+    unsigned int y_length;
 
+    unsigned int fps; // default 30
+    unsigned int keyframePeriod; // default 1000
+};
+struct MJPEG_SETTINGS_S {
+    unsigned int width;
+    unsigned int height;
+    int vcosWidth;
+    int vcosHeight;
+    unsigned int y_length;
+};
 struct SETTINGS_S {
     int width; // default 1920
     int height; // default 1080
     int vcosWidth;
     int vcosHeight;
+    unsigned int streamDenominator;
 
-    struct {
-        unsigned int width;
-        unsigned int height;
-        unsigned int y_length;
-
-        unsigned int fps; // default 30
-        unsigned int keyframePeriod; // default 1000
-    } h264;
-    struct {
-        unsigned int width;
-        unsigned int height;
-        unsigned int y_length;
-    } mjpeg;
+    H264_SETTINGS h264;
+    MJPEG_SETTINGS mjpeg;
 
     unsigned int region[4];
 
@@ -197,18 +205,27 @@ struct SETTINGS_S {
 
 struct HANDLES_S {
     MMAL_COMPONENT_T *camera;    /// Pointer to the camera component
-    MMAL_COMPONENT_T *splitter;  /// Pointer to the splitter component
-    MMAL_COMPONENT_T *h264_encoder;   /// Pointer to the encoder component
-    MMAL_COMPONENT_T *mjpeg_encoder;   /// Pointer to the encoder component
-    MMAL_CONNECTION_T *splitterConnection;/// Pointer to the connection from camera to splitter
-    MMAL_CONNECTION_T *h264EncoderConnection; /// Pointer to the connection from camera to encoder
-    MMAL_CONNECTION_T *mjpegEncoderConnection;
 
-    MMAL_PORT_T* h264EncoderOutputPort;
+    MMAL_COMPONENT_T *splitter;  /// Pointer to the splitter component
+    MMAL_COMPONENT_T *full_splitter; // Pointer to splitter
+    MMAL_COMPONENT_T *resized_splitter; // Pointer to splitter
+    MMAL_CONNECTION_T *full_splitter_connection;/// Pointer to the connection from camera to splitter
+    MMAL_CONNECTION_T *resized_splitter_connection;/// Pointer to the connection from camera to splitter
+
+    MMAL_COMPONENT_T *resizer;
+    MMAL_CONNECTION_T *resizer_connection;
+
     MMAL_PORT_T* splitterYuvPort;
 
-    MMAL_POOL_T *h264EncoderPool; /// Pointer to the pool of buffers used by splitter output port 0
-    MMAL_POOL_T *mjpegEncoderPool; /// Pointer to the pool of buffers used by encoder output port
+    MMAL_COMPONENT_T *h264_encoder;   /// Pointer to the encoder component
+    MMAL_COMPONENT_T *mjpeg_encoder;   /// Pointer to the encoder component
+    MMAL_CONNECTION_T *h264_encoder_connection; /// Pointer to the connection from camera to encoder
+    MMAL_CONNECTION_T *mjpeg_encoder_connection;
+
+    MMAL_PORT_T* h264EncoderOutputPort;
+
+    MMAL_POOL_T *h264_encoder_pool; /// Pointer to the pool of buffers used by splitter output port 0
+    MMAL_POOL_T *mjpeg_encoder_pool; /// Pointer to the pool of buffers used by encoder output port
     MMAL_POOL_T *yuvPool; /// Pointer to the pool of buffers used by encoder output port
 
     SETTINGS* settings;
@@ -282,7 +299,7 @@ void initDetection(SETTINGS* settings) {
 
     unsigned int i = 0;
     for (unsigned int y = y_start; y < y_end; y++) {
-        unsigned int offset = (y * settings->vcosWidth) + x_start;
+        unsigned int offset = (y * settings->mjpeg.vcosWidth) + x_start;
 
         motionDetection.regions[ i++ ] = offset;
         motionDetection.regions[ i++ ] = offset + x_end;
@@ -305,6 +322,8 @@ void freeDetection() {
 void setDefaultSettings(SETTINGS* settings) {
     char* c;
 
+    settings->streamDenominator = 3;
+
     //settings->width = 1920;
     //settings->height = 1080;
     //settings->h264.fps = 30;
@@ -321,8 +340,20 @@ void setDefaultSettings(SETTINGS* settings) {
 
     settings->vcosWidth = ALIGN_UP(settings->width, 16);
     settings->vcosHeight = ALIGN_UP(settings->height, 16);
+
+    settings->h264.width = settings->width;
+    settings->h264.height = settings->height;
+    settings->h264.vcosWidth = settings->vcosWidth;
+    settings->h264.vcosHeight = settings->vcosHeight;
     settings->h264.fps = 10;
     settings->h264.keyframePeriod = 1000;
+
+    settings->mjpeg.width = settings->width / settings->streamDenominator;
+    settings->mjpeg.height = settings->height / settings->streamDenominator;
+    settings->mjpeg.vcosWidth = ALIGN_UP(settings->mjpeg.width, 16);
+    settings->mjpeg.vcosHeight = ALIGN_UP(settings->mjpeg.height, 16);
+    settings->mjpeg.y_length = settings->mjpeg.vcosWidth * settings->mjpeg.vcosHeight * 1.5;
+
     // TODO: rename this
     settings->motion_check_frequency = 3;
     settings->objectDetectionEndpoint[0] = 0;
@@ -392,9 +423,7 @@ void setDefaultSettings(SETTINGS* settings) {
     settings->mjpeg.width = 640;
     settings->mjpeg.height = 480;
     */
-    settings->mjpeg.width = settings->width;
-    settings->mjpeg.height = settings->height;
-    settings->mjpeg.y_length = settings->width * settings->height;
+    
     
     c = getenv("DEBUG");
     if (c) {
@@ -441,9 +470,16 @@ void readSettings(SETTINGS* settings) {
     }
     settings->vcosWidth = ALIGN_UP(settings->width, 16);
     settings->vcosHeight = ALIGN_UP(settings->height, 16);
-    settings->mjpeg.width = settings->width;
-    settings->mjpeg.height = settings->height;
-    settings->mjpeg.y_length = settings->width * settings->height;
+    settings->h264.width = settings->width;
+    settings->h264.height = settings->height;
+    settings->h264.vcosWidth = settings->vcosWidth;
+    settings->h264.vcosHeight = settings->vcosHeight;
+
+    settings->mjpeg.width = settings->width / settings->streamDenominator;
+    settings->mjpeg.height = settings->height / settings->streamDenominator;
+    settings->mjpeg.vcosWidth = ALIGN_UP(settings->mjpeg.width, 16);
+    settings->mjpeg.vcosHeight = ALIGN_UP(settings->mjpeg.height, 16);
+    settings->mjpeg.y_length = settings->mjpeg.vcosWidth * settings->mjpeg.vcosHeight * 1.5;
 
     i = ini_find_property(ini, INI_GLOBAL_SECTION, "fps", 3);
     if (i != INI_NOT_FOUND) {
@@ -490,7 +526,7 @@ void readSettings(SETTINGS* settings) {
         settings->changed_pixels_threshold = atoi(value);
     }
 
-    fprintf(stdout, "[INFO] Settings. %dx%d @ fps: %d motion_check_frequency: %d\n", settings->width, settings->height, settings->h264.fps, settings->motion_check_frequency);
+    fprintf(stdout, "[INFO] SETTINGS. h264 %dx%d @ %d fps. mjpeg %dx%d. motion_check_frequency: %d\n", settings->h264.width, settings->h264.height, settings->h264.fps, settings->mjpeg.width, settings->mjpeg.height, settings->motion_check_frequency);
 
 
     ini_destroy(ini);
@@ -523,7 +559,8 @@ int sendSocket(int socket, char* data, int length) {
     return totalWritten;
 }
 
-void sendBuffersToPort(MMAL_PORT_T* port, MMAL_QUEUE_T* queue) {
+
+void send_buffers_to_port(MMAL_PORT_T* port, MMAL_QUEUE_T* queue) {
     // TODO: move this to main thread
     if (port->is_enabled) {
         MMAL_STATUS_T status;
@@ -555,18 +592,18 @@ MMAL_STATUS_T connectEnable(MMAL_CONNECTION_T **conn, MMAL_PORT_T *output, MMAL_
 }
 
 // TODO: better param order
-void disablePort(SETTINGS* settings, MMAL_PORT_T *port, char const* description) {
-    if (settings->verbose) {
+void disable_port(MMAL_PORT_T *port, char const* description) {
+    if (DEBUG) {
         fprintf(stdout, "[INFO] Disabling %s port\n", description);
     }
     if (!port) {
-        if (settings->verbose) {
+        if (DEBUG) {
             fprintf(stdout, "[INFO] Nothing to disable. %s port is NULL\n", description);
         }
         return;
     }
     if (!port->is_enabled) {
-        if (settings->verbose) {
+        if (DEBUG) {
             fprintf(stdout, "[INFO] Nothing to disable. %s port not enabled\n", description);
         }
         return;
@@ -633,17 +670,16 @@ void cameraControlCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     mmal_buffer_header_release(buffer);
 }
 
-static void destroyCamera(HANDLES *handles, SETTINGS *settings) {
-    if (handles->camera) {
-        if (settings->verbose) {
+static void destroy_camera(MMAL_COMPONENT_T *camera) {
+    if (camera) {
+        if (DEBUG) {
             logInfo("Destroying camera");
         }
-        mmal_component_destroy(handles->camera);
-        handles->camera = NULL;
+        mmal_component_destroy(camera);
     }
 }
 
-static MMAL_STATUS_T createCamera(HANDLES *handles, SETTINGS* settings) {
+static MMAL_STATUS_T create_camera(MMAL_COMPONENT_T **camera_handle, SETTINGS *settings) {
     MMAL_COMPONENT_T *camera = 0;
     MMAL_PARAMETER_CAMERA_CONFIG_T camera_config;
     MMAL_ES_FORMAT_T *format;
@@ -685,7 +721,7 @@ static MMAL_STATUS_T createCamera(HANDLES *handles, SETTINGS* settings) {
     if (status != MMAL_SUCCESS) {
         logError("mmal_port_parameter_set_uint32 failed to set sensor config to 0", __func__);
         //destroyComponent(settings, camera, "camera");
-        destroyCamera(handles, settings);
+        destroy_camera(camera);
         return status;
     }
 
@@ -782,15 +818,16 @@ static MMAL_STATUS_T createCamera(HANDLES *handles, SETTINGS* settings) {
     }
     */
 
-    handles->camera = camera;
+    *camera_handle = camera;
 
 
-    if (settings->verbose) {
+    if (DEBUG) {
         logInfo("Camera created");
     }
 
     return status;
 }
+
 // END CAMERA FUNCTIONS
 
 
@@ -908,15 +945,229 @@ static void destroySplitter(HANDLES *handles, SETTINGS *settings) {
         handles->splitter = NULL;
     }
 }
-// END SPLITTER FUNCTIONS
+// END OLD SPLITTER FUNCTIONS
 
+// BEGIN NEW SPLITTER FUNCTIONS
+static MMAL_STATUS_T create_splitter(MMAL_COMPONENT_T **splitter_handle, MMAL_CONNECTION_T **connection_handle, MMAL_PORT_T *output_port, int num_outputs) {
+    MMAL_COMPONENT_T *splitter = 0;
+    MMAL_ES_FORMAT_T *format;
+    MMAL_STATUS_T status;
+    int i;
+
+    status = mmal_component_create(MMAL_COMPONENT_DEFAULT_VIDEO_SPLITTER, &splitter);
+    if (status != MMAL_SUCCESS) {
+        logError("mmal_component_create failed for splitter", __func__);
+        return status;
+    }
+
+    // Tell splitter which format it'll be receiving from the camera video output
+    mmal_format_copy(splitter->input[0]->format, output_port->format);
+
+    status = mmal_port_format_commit(splitter->input[0]);
+    if (status != MMAL_SUCCESS) {
+        logError("mmal_port_format_commit failed on splitter input", __func__);
+        mmal_component_destroy(splitter);
+        return status;
+    }
+
+    splitter->output_num = num_outputs;
+    // Pass through the same input format to outputs
+    for (i = 0; i < splitter->output_num; i++) {
+        mmal_format_copy(splitter->output[i]->format, splitter->input[0]->format);
+
+        status = mmal_port_format_commit(splitter->output[i]);
+        if (status != MMAL_SUCCESS) {
+            logError("mmal_port_format_commit failed on a splitter output", __func__);
+            mmal_component_destroy(splitter);
+            return status;
+        }
+    }
+
+    status = mmal_component_enable(splitter);
+    if (status != MMAL_SUCCESS) {
+        logError("mmal_component_enable failed on splitter", __func__);
+        mmal_component_destroy(splitter);
+        return status;
+    }
+
+    *splitter_handle = splitter;
+    if (DEBUG) {
+        logInfo("Splitter created");
+    }
+
+    if (DEBUG) {
+        logInfo("Connecting specified port to splitter input port");
+    }
+
+    status = mmal_connection_create(
+        connection_handle,
+        output_port,
+        splitter->input[0],
+        MMAL_CONNECTION_FLAG_TUNNELLING | 
+        MMAL_CONNECTION_FLAG_ALLOCATION_ON_INPUT
+    );
+    if (status != MMAL_SUCCESS) {
+        *connection_handle = NULL;
+        logError("connectEnable failed for specified port to splitter input", __func__);
+        mmal_component_destroy(splitter);
+        return EX_ERROR;
+    }
+
+    status = mmal_connection_enable(*connection_handle);
+    if (status != MMAL_SUCCESS) {
+        mmal_connection_destroy(*connection_handle);
+        *connection_handle = NULL;
+    }
+
+    return status;
+}
+
+static void destroy_splitter(MMAL_COMPONENT_T *splitter, MMAL_CONNECTION_T *connection) {
+    if (connection) {
+        if (DEBUG) {
+            logInfo("Destroying splitter connection");
+        }
+    }
+    mmal_connection_destroy(connection);
+
+
+    if (splitter) {
+        if (DEBUG) {
+            logInfo("Destroying splitter");
+        }
+        mmal_component_destroy(splitter);
+    }
+}
+// END NEW SPLITTER FUNCTIONS
+
+
+
+
+static MMAL_STATUS_T create_resizer(MMAL_COMPONENT_T **handle, MMAL_CONNECTION_T **connection_handle, MMAL_PORT_T *output_port, MJPEG_SETTINGS *settings) {
+    MMAL_COMPONENT_T *resizer = 0;
+    MMAL_PORT_T *splitter_output = NULL;
+    MMAL_ES_FORMAT_T *format;
+    MMAL_STATUS_T status;
+    MMAL_POOL_T *pool;
+    int i;
+
+    status = mmal_component_create("vc.ril.isp", &resizer);
+    if (status != MMAL_SUCCESS) {
+        logError("mmal_component_create failed for resizer", __func__);
+        return status;
+    }
+
+    // Tell resizer which format it'll be receiving from the camera video output
+    mmal_format_copy(resizer->input[0]->format, output_port->format);
+
+    status = mmal_port_format_commit(resizer->input[0]);
+    if (status != MMAL_SUCCESS) {
+        logError("mmal_port_format_commit failed on resizer input", __func__);
+        mmal_component_destroy(resizer);
+        return status;
+    }
+
+    // configure output format
+    // need botfh of these to move from opaque format
+    format = resizer->output[0]->format;
+    format->encoding = MMAL_ENCODING_I420;
+    format->encoding_variant = MMAL_ENCODING_I420;
+
+    format->es->video.width = settings->vcosWidth;
+    format->es->video.height = settings->vcosHeight;
+    format->es->video.crop.x = 0;
+    format->es->video.crop.y = 0;
+    format->es->video.crop.width = settings->width;
+    format->es->video.crop.height = settings->height;
+
+    status = mmal_port_format_commit(resizer->output[0]);
+    if (status != MMAL_SUCCESS) {
+        logError("mmal_port_format_commit failed on resizer output port", __func__);
+        mmal_component_destroy(resizer);
+        return status;
+    }
+
+    status = mmal_component_enable(resizer);
+    if (status != MMAL_SUCCESS) {
+        logError("mmal_component_enable failed on resizer", __func__);
+        mmal_component_destroy(resizer);
+        return status;
+    }
+
+
+    if (DEBUG) {
+        logInfo("Connecting splitter YUV port to resizer input port");
+    }
+
+    status = mmal_connection_create(
+        connection_handle,
+        output_port,
+        resizer->input[0],
+        MMAL_CONNECTION_FLAG_TUNNELLING | MMAL_CONNECTION_FLAG_ALLOCATION_ON_INPUT
+    );
+    if (status != MMAL_SUCCESS) {
+        *connection_handle = NULL;
+        logError("connectEnable failed for splitter YUV to resizer", __func__);
+        mmal_component_destroy(resizer);
+        return EX_ERROR;
+    }
+
+    status = mmal_connection_enable(*connection_handle);
+    if (status != MMAL_SUCCESS) {
+        mmal_connection_destroy(*connection_handle);
+        *connection_handle = NULL;
+    }
+
+    *handle = resizer;
+    if (DEBUG) {
+        logInfo("Resizer created");
+    }
+    return status;
+}
+
+static void destroy_resizer(MMAL_COMPONENT_T *splitter, MMAL_CONNECTION_T *connection) {
+    if (connection) {
+        if (DEBUG) {
+            logInfo("Destroying resizer connection");
+        }
+    }
+    mmal_connection_destroy(connection);
+
+
+    if (splitter) {
+        if (DEBUG) {
+            logInfo("Destroying resizer");
+        }
+        mmal_component_destroy(splitter);
+    }
+}
 
 
 // MJPEG ENCODER FUNCTIONS
-static MMAL_STATUS_T createMjpegEncoder(HANDLES *handles, SETTINGS *settings) {
+static void destroy_mjpeg_encoder(MMAL_COMPONENT_T *component, MMAL_CONNECTION_T *connection, MMAL_POOL_T *pool) {
+    if (connection) {
+        mmal_connection_destroy(connection);
+    }
+
+    // Get rid of any port buffers first
+    if (pool) {
+        if (DEBUG) {
+            logInfo("Destroying mjpeg encoder pool");
+        }
+        mmal_port_pool_destroy(component->output[0], pool);
+    }
+
+    if (component) {
+        if (DEBUG) {
+            logInfo("Destroying mjpeg encoder component");
+        }
+        mmal_component_destroy(component);
+    }
+}
+
+static MMAL_STATUS_T create_mjpeg_encoder(MMAL_COMPONENT_T **handle, MMAL_POOL_T **pool_handle, MMAL_CONNECTION_T **connection_handle, MMAL_PORT_T *output_port, MMAL_PORT_BH_CB_T callback, MJPEG_SETTINGS *settings) {
     MMAL_COMPONENT_T *encoder = 0;
-    MMAL_PORT_T *splitter_output;
-    MMAL_PORT_T *encoder_input = NULL, *encoder_output = NULL;
+    MMAL_PORT_T *encoder_output = NULL;
     MMAL_STATUS_T status;
     MMAL_POOL_T *pool;
 
@@ -927,26 +1178,12 @@ static MMAL_STATUS_T createMjpegEncoder(HANDLES *handles, SETTINGS *settings) {
         return status;
     }
 
-    splitter_output = handles->splitter->output[SPLITTER_MJPEG_PORT];
-    encoder_input = encoder->input[0];
+    mmal_format_copy(encoder->input[0]->format, output_port->format);
+
     encoder_output = encoder->output[0];
-
-    // Encoder input should match splitter output format,right?
-    // TODO: this seems wrong
-    mmal_format_copy(encoder_input->format, splitter_output->format);
-
     encoder_output->format->encoding = MMAL_ENCODING_MJPEG;
     // TODO: what should this be? should it vary based on resolution?
     encoder_output->format->bitrate = MJPEG_BITRATE;
-
-    // TODO: this doesn't work
-    /*
-    encoder_output->format->es->video.width = 640;
-    encoder_output->format->es->video.height = 480;
-    encoder_output->format->es->video.crop.width = 640;
-    encoder_output->format->es->video.crop.height = 480;
-    */
-
 
     // WTF docs say these shoudl come after format commit, but that seems
     // wrong, and causes weird behavior
@@ -956,7 +1193,6 @@ static MMAL_STATUS_T createMjpegEncoder(HANDLES *handles, SETTINGS *settings) {
     // https://github.com/waveform80/picamera/pull/179/commits/405f5ed0b107209cdf3dd27b92fceec8962a77d6
     encoder_output->buffer_num = 3;
     encoder_output->buffer_size = settings->width * settings->height * 1.5;
-
 
     status = mmal_port_format_commit(encoder_output);
     if (status != MMAL_SUCCESS) {
@@ -978,6 +1214,35 @@ static MMAL_STATUS_T createMjpegEncoder(HANDLES *handles, SETTINGS *settings) {
         return status;
     }
 
+    status = mmal_connection_create(
+        connection_handle,
+        output_port,
+        encoder->input[0],
+        MMAL_CONNECTION_FLAG_TUNNELLING | MMAL_CONNECTION_FLAG_ALLOCATION_ON_INPUT
+    );
+    if (status != MMAL_SUCCESS) {
+        logInfo("Failed to create connection to mjpeg encoder", __func__);
+        return status;
+    }
+
+    status = mmal_connection_enable(*connection_handle);
+    if (status != MMAL_SUCCESS) {
+        logError("Failed to enable connection to mjpeg encoder", __func__);
+        return EX_ERROR;
+    }
+
+    if (DEBUG) {
+        logInfo("Enabling mjpeg encoder output port");
+    }
+
+    status = mmal_port_enable(encoder_output, callback);
+    if (status != MMAL_SUCCESS) {
+        logError("mmal_port_enable failed for mjpeg encoder output", __func__);
+        destroy_mjpeg_encoder(encoder, *connection_handle, pool);
+        return EX_ERROR;
+    }
+
+
     fprintf(stdout, "Creating mjpeg buffer pool with %d bufs of size: %d\n", encoder_output->buffer_num, encoder_output->buffer_size);
 
     // TODO: we probably don't need a pool. can likely get by with 1 buffer
@@ -988,10 +1253,10 @@ static MMAL_STATUS_T createMjpegEncoder(HANDLES *handles, SETTINGS *settings) {
         return MMAL_ENOMEM;
     }
 
-    handles->mjpegEncoderPool = pool;
-    handles->mjpeg_encoder = encoder;
+    *handle = encoder;
+    *pool_handle = pool;
 
-    if (settings->verbose) {
+    if (DEBUG) {
         logInfo("Created MJPEG encoder");
     }
 
@@ -1014,6 +1279,8 @@ void mjpegCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     char contentLength[21];
     int contentLengthLength;
 
+    //logInfo("got mjpeg");
+
     pthread_mutex_lock(&mjpeg_concurrent_mutex);
     if (mjpeg_concurrent > 0) {
 	    printf("mjpegCallback already in process\n");
@@ -1025,7 +1292,7 @@ void mjpegCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     if (!userdata) {
         logError("Expected userdata in mjpeg callback", __func__);
         mmal_buffer_header_release(buffer);
-        sendBuffersToPort(port, userdata->handles->mjpegEncoderPool->queue);
+        send_buffers_to_port(port, userdata->handles->mjpeg_encoder_pool->queue);
 
 	pthread_mutex_lock(&mjpeg_concurrent_mutex);
 	mjpeg_concurrent--;
@@ -1036,7 +1303,7 @@ void mjpegCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     if (buffer->length == 0) {
         logError("No data in mjpeg callback buffer", __func__);
         mmal_buffer_header_release(buffer);
-        sendBuffersToPort(port, userdata->handles->mjpegEncoderPool->queue);
+        send_buffers_to_port(port, userdata->handles->mjpeg_encoder_pool->queue);
 
 	pthread_mutex_lock(&mjpeg_concurrent_mutex);
 	mjpeg_concurrent--;
@@ -1073,30 +1340,14 @@ void mjpegCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
 
     mmal_buffer_header_release(buffer);
 
-    sendBuffersToPort(port, userdata->handles->mjpegEncoderPool->queue);
+    send_buffers_to_port(port, userdata->handles->mjpeg_encoder_pool->queue);
 
     pthread_mutex_lock(&mjpeg_concurrent_mutex);
     mjpeg_concurrent--;
     pthread_mutex_unlock(&mjpeg_concurrent_mutex);
 }
 
-void destroyMjpegEncoder(HANDLES *handles, SETTINGS *settings) {
-    if (handles->mjpegEncoderPool) {
-        if (settings->verbose) {
-            logInfo("Destroying mjpeg encoder pool");
-        }
-        mmal_port_pool_destroy(handles->mjpeg_encoder->output[0], handles->mjpegEncoderPool);
-        handles->mjpegEncoderPool = NULL;
-    }
 
-    if (handles->mjpeg_encoder) {
-        if (settings->verbose) {
-            logInfo("Destroying mjpeg encoder component");
-        }
-        mmal_component_destroy(handles->mjpeg_encoder);
-        handles->mjpeg_encoder = NULL;
-    }
-}
 // END MJPEG FUNCTIONS
 
 
@@ -1237,7 +1488,7 @@ static MMAL_STATUS_T createH264Encoder(HANDLES *handles, SETTINGS *settings) {
     }
 
 
-    handles->h264EncoderPool = pool;
+    handles->h264_encoder_pool = pool;
     handles->h264_encoder = encoder;
 
     if (settings->verbose) {
@@ -1247,13 +1498,210 @@ static MMAL_STATUS_T createH264Encoder(HANDLES *handles, SETTINGS *settings) {
     return status;
 }
 
+static void destroy_h264_encoder(MMAL_COMPONENT_T *component, MMAL_CONNECTION_T *connection, MMAL_POOL_T *pool) {
+    if (connection) {
+        mmal_connection_destroy(connection);
+    }
+
+    // Get rid of any port buffers first
+    if (pool) {
+        if (DEBUG) {
+            logInfo("Destroying h264 encoder pool");
+        }
+        mmal_port_pool_destroy(component->output[0], pool);
+    }
+
+    if (component) {
+        if (DEBUG) {
+            logInfo("Destroying h264 encoder component");
+        }
+        mmal_component_destroy(component);
+    }
+}
+
+static MMAL_STATUS_T create_h264_encoder(MMAL_COMPONENT_T **handle, MMAL_POOL_T **pool_handle, MMAL_CONNECTION_T **connection_handle, MMAL_PORT_T *output_port, MMAL_PORT_BH_CB_T callback, H264_SETTINGS *settings) {
+    MMAL_COMPONENT_T *encoder = 0;
+    MMAL_PORT_T *encoder_output = NULL;
+    MMAL_STATUS_T status;
+    MMAL_POOL_T *pool;
+
+    status = mmal_component_create(MMAL_COMPONENT_DEFAULT_VIDEO_ENCODER, &encoder);
+    if (status != MMAL_SUCCESS) {
+        logError("mmal_component_create failed for h264 encoder", __func__);
+        return status;
+    }
+
+    // TODO: do i really need this?
+    if (!encoder->input_num || !encoder->output_num) {
+        logError("Expected h264 encoder to have input/output ports", __func__);
+        return MMAL_ENOSYS;
+    }
+
+    encoder_output = encoder->output[0];
+
+    // Encoder input should match splitter output format
+    mmal_format_copy(encoder->input[0]->format, output_port->format);
+
+    encoder_output->format->encoding = MMAL_ENCODING_H264;
+    // 25Mit or 62.5Mbit
+    encoder_output->format->bitrate = H264_BITRATE;
+
+    // this isn't quite working
+    encoder_output->format->es->video.width = settings->vcosWidth;
+    encoder_output->format->es->video.height = settings->vcosHeight;
+    encoder_output->format->es->video.crop.x = 0;
+    encoder_output->format->es->video.crop.y = 0;
+    encoder_output->format->es->video.crop.width = settings->width;
+    encoder_output->format->es->video.crop.height = settings->height;
+
+    // Frame rate will get updated according to input frame rate once connected
+    encoder_output->format->es->video.frame_rate.num = 0;
+    encoder_output->format->es->video.frame_rate.den = 1;
+
+    status = mmal_port_format_commit(encoder_output);
+    if (status != MMAL_SUCCESS) {
+        logError("mmal_port_format_commit failed on h264 encoder output port", __func__);
+        mmal_component_destroy(encoder);
+        return status;
+    }
+
+    /*
+    encoder_output->buffer_size = encoder_output->buffer_size_recommended;
+    if (encoder_output->buffer_size < encoder_output->buffer_size_min) {
+        logInfo("Adjusting buffer_size");
+        encoder_output->buffer_size = encoder_output->buffer_size_min;
+    }
+
+
+    // TODO: raise this once we get queue set up
+    encoder_output->buffer_num = encoder_output->buffer_num_recommended;
+    if (encoder_output->buffer_num < encoder_output->buffer_num_min) {
+        logInfo("Adjusting buffer_num");
+        encoder_output->buffer_num = encoder_output->buffer_num_min;
+    }
+    */
+
+
+    encoder_output->buffer_size = settings->width * settings->height * 1.5;
+    // 3 seconds of buffers
+    encoder_output->buffer_num = DESIRED_OUTPUT_BUFFERS; //settings->h264.fps + 10;
+
+    //encoder_output->buffer_size = encoder_output->buffer_size_recommended;
+    //encoder_output->buffer_num = encoder_output->buffer_num_recommended;
+
+    fprintf(stdout, "Creating h264 buffer pool with %d bufs of size for %dx%d: %d\n", encoder_output->buffer_num, settings->width, settings->height, encoder_output->buffer_size);
+
+    MMAL_PARAMETER_UINT32_T intraperiod;
+    intraperiod.hdr.id = MMAL_PARAMETER_INTRAPERIOD;
+    intraperiod.hdr.size = sizeof(intraperiod);
+    intraperiod.value = settings->fps;
+    status = mmal_port_parameter_set(encoder_output, &intraperiod.hdr);
+    if (status != MMAL_SUCCESS) {
+        logError("mmal_port_parameter_set failed on h264 encoder", __func__);
+        // who cares?
+    }
+
+    status = mmal_port_parameter_set_boolean(encoder_output, MMAL_PARAMETER_VIDEO_ENCODE_SPS_TIMING, true);
+    if (status != MMAL_SUCCESS) {
+        logError("mmal_port_parameter_set_boolean failed to set SPS timing on h264 encoder", __func__);
+    }
+
+
+    MMAL_PARAMETER_VIDEO_PROFILE_T video_profile;
+    video_profile.hdr.id = MMAL_PARAMETER_PROFILE;
+    video_profile.hdr.size = sizeof(video_profile);
+
+    video_profile.profile[0].profile = MMAL_VIDEO_PROFILE_H264_HIGH;
+    video_profile.profile[0].level = MMAL_VIDEO_LEVEL_H264_4;
+
+    /*
+    if((VCOS_ALIGN_UP(settings->width,16) >> 4) * (VCOS_ALIGN_UP(settings->height,16) >> 4) * settings->h264.fps > 245760) {
+        logInfo("Here");
+        if((VCOS_ALIGN_UP(settings->width,16) >> 4) * (VCOS_ALIGN_UP(settings->height,16) >> 4) * settings->h264.fps <= 522240) {
+            logInfo("Too many macroblocks/s: Increasing H264 Level to 4.2\n");
+            video_profile.profile[0].level = MMAL_VIDEO_LEVEL_H264_42;
+        } else {
+            logError("Too many macroblocks/s requested, bailing", __func__);
+            mmal_component_destroy(encoder);
+            return MMAL_EINVAL;
+        }
+    }
+    */
+    
+    status = mmal_port_parameter_set(encoder_output, &video_profile.hdr);
+    if (status != MMAL_SUCCESS) {
+        logError("mmal_port_parameter_set failed on h264 encoder output port profile", __func__);
+        mmal_component_destroy(encoder);
+        return status;
+    }
+
+    status = mmal_component_enable(encoder);
+    if (status != MMAL_SUCCESS) {
+        logError("mmal_component_enable failed on h264 encoder", __func__);
+        mmal_component_destroy(encoder);
+        return status;
+    }
+
+
+    if (DEBUG) {
+        logInfo("Connecting splitter h264 port to h264 encoder input port");
+    }
+
+    status = mmal_connection_create(
+        connection_handle,
+        output_port,
+        encoder->input[0],
+        MMAL_CONNECTION_FLAG_TUNNELLING | MMAL_CONNECTION_FLAG_ALLOCATION_ON_INPUT
+    );
+    if (status != MMAL_SUCCESS) {
+        logInfo("Failed to create connection to h264 encoder", __func__);
+        return status;
+    }
+
+    status = mmal_connection_enable(*connection_handle);
+    if (status != MMAL_SUCCESS) {
+        logError("Failed to enable connection to h264 encoder", __func__);
+        return EX_ERROR;
+    }
+
+    if (DEBUG) {
+        logInfo("Enabling h264 encoder output port");
+    }
+
+    status = mmal_port_enable(encoder_output, callback);
+    if (status != MMAL_SUCCESS) {
+        logError("mmal_port_enable failed for h264 encoder output", __func__);
+        destroy_h264_encoder(encoder, *connection_handle, pool);
+        return EX_ERROR;
+    }
+
+    pool = mmal_port_pool_create(encoder_output, encoder_output->buffer_num, encoder_output->buffer_size);
+    if (!pool) {
+        logError("mmal_port_pool_create failed for h264 encoder output", __func__);
+        // TODO: what error code for this?
+        return MMAL_ENOMEM;
+    }
+
+
+    *handle = encoder;
+    *pool_handle = pool;
+
+    if (DEBUG) {
+        logInfo("Created H264 encoder");
+    }
+
+    return status;
+}
+
+
+
 
 void sendH264Buffers(MMAL_PORT_T* port, CALLBACK_USERDATA* userdata) {
     // TODO: move this to main thread
     if (port->is_enabled) {
         MMAL_STATUS_T status;
         MMAL_BUFFER_HEADER_T* new_buffer;
-        while ( (new_buffer = mmal_queue_get(userdata->handles->h264EncoderPool->queue)) ) {
+        while ( (new_buffer = mmal_queue_get(userdata->handles->h264_encoder_pool->queue)) ) {
             status = mmal_port_send_buffer(port, new_buffer);
             if (status != MMAL_SUCCESS) {
                 logError("mmal_port_send_buffer failed, no buffer to return to h264 encoder port\n", __func__);
@@ -1307,7 +1755,7 @@ void h264Callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         debug = settings->debug;
     }
 
-    h264BufferDebug(buffer);
+    //h264BufferDebug(buffer);
 
     if (buffer->cmd) {
         logInfo("Found cmd in h264 buffer. Releasing");
@@ -1388,7 +1836,6 @@ void h264Callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     } else {
 
         if (buffer->flags & MMAL_BUFFER_HEADER_FLAG_KEYFRAME) {
-            //h264BufferDebug(buffer);
             // if first keyframe buffer, which should have pts
             if (buffer->pts != MMAL_TIME_UNKNOWN) {
                 // keyframe might have invalid pts if frame data is split across more than 1 buffer
@@ -1473,12 +1920,12 @@ void h264Callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
 
 static void destroyH264Encoder(HANDLES *handles, SETTINGS *settings) {
     // Get rid of any port buffers first
-    if (handles->h264EncoderPool) {
+    if (handles->h264_encoder_pool) {
         if (settings->verbose) {
             logInfo("Destroying h264 encoder pool");
         }
-        mmal_port_pool_destroy(handles->h264_encoder->output[0], handles->h264EncoderPool);
-        handles->h264EncoderPool = NULL;
+        mmal_port_pool_destroy(handles->h264_encoder->output[0], handles->h264_encoder_pool);
+        handles->h264_encoder_pool = NULL;
     }
 
     if (handles->h264_encoder) {
@@ -1570,6 +2017,8 @@ void yuvCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     mmal_buffer_header_release(buffer);
 
     // TODO: refactor this block
+    send_buffers_to_port(port, userdata->handles->yuvPool->queue);
+    /*
     if (port->is_enabled) {
         MMAL_STATUS_T status;
         MMAL_BUFFER_HEADER_T* new_buffer;
@@ -1581,6 +2030,7 @@ void yuvCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             }
         }
     }
+    */
 }
 // END YUV FUNCTIONS
 
@@ -1983,16 +2433,6 @@ int main(int argc, const char **argv) {
 
     MMAL_STATUS_T status = MMAL_SUCCESS;
 
-    MMAL_PORT_T *cameraVideoPort = NULL;
-    MMAL_PORT_T *splitterInputPort = NULL;
-    MMAL_PORT_T *splitterH264Port = NULL;
-    MMAL_PORT_T *splitterMjpegPort = NULL;
-    MMAL_PORT_T *splitterYuvPort = NULL;
-    MMAL_PORT_T *h264EncoderInputPort = NULL;
-    MMAL_PORT_T *h264EncoderOutputPort = NULL;
-    MMAL_PORT_T *mjpegEncoderInputPort = NULL;
-    MMAL_PORT_T *mjpegEncoderOutputPort = NULL;
-
     // threading
     pthread_t httpServerThreadId;
     void *httpServerThreadStatus;
@@ -2024,14 +2464,16 @@ int main(int argc, const char **argv) {
     pthread_mutex_init(&mjpeg_concurrent_mutex, NULL);
 
     handles.camera = NULL;
-    handles.splitter = NULL;
+    handles.full_splitter = NULL;
+    handles.resized_splitter = NULL;
+    handles.full_splitter_connection = NULL;
+    handles.resized_splitter_connection = NULL;
     handles.h264_encoder = NULL;
     handles.mjpeg_encoder = NULL;
-    handles.splitterConnection = NULL;
-    handles.h264EncoderConnection = NULL;
-    handles.mjpegEncoderConnection = NULL;
-    handles.h264EncoderPool = NULL;
-    handles.mjpegEncoderPool = NULL;
+    handles.h264_encoder_connection = NULL;
+    handles.mjpeg_encoder_connection = NULL;
+    handles.h264_encoder_pool = NULL;
+    handles.mjpeg_encoder_pool = NULL;
     handles.settings = &settings;
     handles.h264CallbackUserdata = &h264CallbackUserdata;
 
@@ -2049,7 +2491,6 @@ int main(int argc, const char **argv) {
         logError("FAILED TO ALLOCATE H264 BUFFER", __func__);
         // OF SIZE %u\n", h264_buffer_size);
     }
-    
 
 
     bcm_host_init();
@@ -2061,211 +2502,94 @@ int main(int argc, const char **argv) {
     //fprintf(stdout, "Main thread id %d\n", tid);
 
 
-    if ((status = createCamera(&handles, &settings)) != MMAL_SUCCESS) {
-        logError("createCamera failed", __func__);
+    if ((status = create_camera(&handles.camera, &settings)) != MMAL_SUCCESS) {
+        logError("create_camera failed", __func__);
         return EX_ERROR;
 
-    } else if ((status = createSplitter(&handles, &settings)) != MMAL_SUCCESS) {
-        logError("createSplitter failed", __func__);
-        destroyCamera(&handles, &settings);
+    } else if ((status = create_splitter(&handles.full_splitter, &handles.full_splitter_connection, handles.camera->output[CAMERA_VIDEO_PORT], 2)) != MMAL_SUCCESS) {
+        logError("create_splitter failed", __func__);
+        destroy_camera(handles.camera);
         return EX_ERROR;
 
-    } else if ((status = createH264Encoder(&handles, &settings)) != MMAL_SUCCESS) {
-        logError("createH264Encoder failed",  __func__);
-        destroySplitter(&handles, &settings);
-        destroyCamera(&handles, &settings);
+    } else if ((status = create_h264_encoder(&handles.h264_encoder, &handles.h264_encoder_pool, &handles.h264_encoder_connection, handles.full_splitter->output[0], h264Callback, &settings.h264)) != MMAL_SUCCESS) {
+        logError("createH26create_h264_encoder4Encoder failed",  __func__);
+        destroy_splitter(handles.full_splitter, handles.full_splitter_connection);
+        destroy_camera(handles.camera);
+        return EX_ERROR;
+    
+    } else if ((status = create_resizer(&handles.resizer, &handles.resizer_connection, handles.full_splitter->output[1], &settings.mjpeg)) != MMAL_SUCCESS) {
+        logError("create_resizer failed", __func__);
+        destroy_h264_encoder(handles.h264_encoder, handles.h264_encoder_connection, handles.h264_encoder_pool);
+        destroy_splitter(handles.full_splitter, handles.full_splitter_connection);
+        destroy_camera(handles.camera);
         return EX_ERROR;
 
-    } else if ((status = createMjpegEncoder(&handles, &settings)) != MMAL_SUCCESS) {
+    } else if ((status = create_splitter(&handles.resized_splitter, &handles.resized_splitter_connection, handles.resizer->output[0], 2)) != MMAL_SUCCESS) {
+        logError("create_splitter failed", __func__);
+        destroy_resizer(handles.resizer, handles.resizer_connection);
+        destroy_h264_encoder(handles.h264_encoder, handles.h264_encoder_connection, handles.h264_encoder_pool);
+        destroy_splitter(handles.full_splitter, handles.full_splitter_connection);
+        destroy_camera(handles.camera);
+        return EX_ERROR;
+
+
+    } else if ((status = create_mjpeg_encoder(&handles.mjpeg_encoder, &handles.mjpeg_encoder_pool, &handles.mjpeg_encoder_connection, handles.resized_splitter->output[0], mjpegCallback, &settings.mjpeg)) != MMAL_SUCCESS) {
         logError("createMjpegEncoder failed", __func__);
-        destroyH264Encoder(&handles, &settings);
-        destroySplitter(&handles, &settings);
-        destroyCamera(&handles, &settings);
-        return EX_ERROR;
-    }
-
-    
-    // Major components have been created, let's hook them together
-    
-    if (settings.verbose) {
-        logInfo("Connecting things together now");
-    }
-
-    cameraVideoPort = handles.camera->output[CAMERA_VIDEO_PORT];
-
-    splitterInputPort = handles.splitter->input[0];
-    splitterH264Port = handles.splitter->output[SPLITTER_H264_PORT];
-    splitterMjpegPort = handles.splitter->output[SPLITTER_MJPEG_PORT];
-    splitterYuvPort = handles.splitter->output[SPLITTER_YUV_PORT];
-    handles.splitterYuvPort = splitterYuvPort;
-
-    h264EncoderInputPort  = handles.h264_encoder->input[0];
-    h264EncoderOutputPort = handles.h264_encoder->output[0];
-    handles.h264EncoderOutputPort = h264EncoderOutputPort;
-
-    mjpegEncoderInputPort  = handles.mjpeg_encoder->input[0];
-    mjpegEncoderOutputPort = handles.mjpeg_encoder->output[0];
-
-    if (settings.verbose)
-        logInfo("Connecting camera video port to splitter input port");
-
-    status = connectEnable(&handles.splitterConnection, cameraVideoPort, splitterInputPort);
-    if (status != MMAL_SUCCESS) {
-        handles.splitterConnection = NULL;
-        logError("connectEnable failed for camera video port to splitter input", __func__);
-        destroyMjpegEncoder(&handles, &settings);
-        destroyH264Encoder(&handles, &settings);
-        destroySplitter(&handles, &settings);
-        destroyCamera(&handles, &settings);
-        return EX_ERROR;
-    }
-
-    // H264 ENCODER SETUP
-    if (settings.verbose) {
-        logInfo("Connecting splitter h264 port to h264 encoder input port");
-    }
-
-    status = connectEnable(&handles.h264EncoderConnection, splitterH264Port, h264EncoderInputPort);
-    if (status != MMAL_SUCCESS) {
-        logError("connectEnable failed for splitter h264 port to h264 encoder input", __func__);
-        destroyMjpegEncoder(&handles, &settings);
-        destroyH264Encoder(&handles, &settings);
-        destroySplitter(&handles, &settings);
-        destroyCamera(&handles, &settings);
+        destroy_splitter(handles.resized_splitter, handles.resized_splitter_connection);
+        destroy_resizer(handles.resizer, handles.resizer_connection);
+        destroy_h264_encoder(handles.h264_encoder, handles.h264_encoder_connection, handles.h264_encoder_pool);
+        destroy_splitter(handles.full_splitter, handles.full_splitter_connection);
+        destroy_camera(handles.camera);
         return EX_ERROR;
     }
 
 
-    h264EncoderOutputPort->userdata = (struct MMAL_PORT_USERDATA_T *)&h264CallbackUserdata;
-
-    if (settings.verbose) {
-        logInfo("Enabling mjpeg encoder output port");
-    }
-
-    // Enable the h264 encoder output port and tell it its callback function
-    status = mmal_port_enable(h264EncoderOutputPort, h264Callback);
-    if (status != MMAL_SUCCESS) {
-        logError("mmal_port_enable failed for h264 encoder output", __func__);
-        // disconnect and disable first?
-        destroyMjpegEncoder(&handles, &settings);
-        destroyH264Encoder(&handles, &settings);
-        destroySplitter(&handles, &settings);
-        destroyCamera(&handles, &settings);
-        return EX_ERROR;
-    }
-
-    // make buffer headers available to encoder output
-    if (settings.verbose) {
-        logInfo("Providing buffers to h264 encoder output");
-    }
-    num = mmal_queue_length(handles.h264EncoderPool->queue);
-    for (i = 0; i < num; i++) {
-        MMAL_BUFFER_HEADER_T *buffer = mmal_queue_get(handles.h264EncoderPool->queue);
-
-        if (!buffer) {
-            logError("mmal_queue_get failed for h264 encoder pool", __func__);
-            break;
-        } else {
-            status = mmal_port_send_buffer(h264EncoderOutputPort, buffer);
-            if (status != MMAL_SUCCESS) {
-                logError("mmal_port_send_buffer failed for h264 encoder output port", __func__);
-                break;
-            }
-        }
-    }
-
-
-
-    // MJPEG ENCODER SETUP
-
-    if (settings.verbose) {
-        logInfo("Connecting splitter mjpeg port to mjpeg encoder input port");
-    }
-
-    status = connectEnable(&handles.mjpegEncoderConnection, splitterMjpegPort, mjpegEncoderInputPort);
-    if (status != MMAL_SUCCESS) {
-        logError("connectEnable failed for splitter mjpeg port to mjpeg encoder input", __func__);
-        destroyMjpegEncoder(&handles, &settings);
-        destroyH264Encoder(&handles, &settings);
-        destroySplitter(&handles, &settings);
-        destroyCamera(&handles, &settings);
-        return EX_ERROR;
-    }
-
-    mjpegEncoderOutputPort->userdata = (struct MMAL_PORT_USERDATA_T *)&mjpegCallbackUserdata;
-
-    if (settings.verbose) {
-        logInfo("Enabling mjpeg encoder output port");
-    }
-
-    // Enable the splitter output port and tell it its callback function
-    status = mmal_port_enable(mjpegEncoderOutputPort, mjpegCallback);
+    // YUV STUFF LAST MILE
+    status = mmal_port_enable(handles.resized_splitter->output[1], yuvCallback);
     if (status != MMAL_SUCCESS) {
         logError("mmal_port_enable failed for mjpeg encoder output", __func__);
-        // disconnect and disable first?
-        destroyMjpegEncoder(&handles, &settings);
-        destroyH264Encoder(&handles, &settings);
-        destroySplitter(&handles, &settings);
-        destroyCamera(&handles, &settings);
+        destroy_mjpeg_encoder(handles.mjpeg_encoder, handles.mjpeg_encoder_connection, handles.mjpeg_encoder_pool);
+        destroy_splitter(handles.resized_splitter, handles.resized_splitter_connection);
+        destroy_resizer(handles.resizer, handles.resizer_connection);
+        destroy_h264_encoder(handles.h264_encoder, handles.h264_encoder_connection, handles.h264_encoder_pool);
+        destroy_splitter(handles.full_splitter, handles.full_splitter_connection);
+        destroy_camera(handles.camera);
         return EX_ERROR;
     }
 
-    // make buffer headers available to encoder output
-    // TODO: i don't understand this
-    if (settings.verbose) {
-        logInfo("Providing buffers to mjpeg encoder output");
+    // Now pool for YUV output
+    handles.resized_splitter->output[1]->buffer_num = 3;
+    handles.resized_splitter->output[1]->buffer_size = settings.mjpeg.width * settings.mjpeg.height * 3;
+    fprintf(stdout, "Creating YUV buffer pool with %d bufs of size: %d\n", handles.resized_splitter->output[1]->buffer_num, handles.resized_splitter->output[1]->buffer_size);
+
+    // TODO: we probably don't need a pool. can likely get by with 1 buffer
+    handles.yuvPool = mmal_port_pool_create(
+        handles.resized_splitter->output[1], handles.resized_splitter->output[1]->buffer_num, handles.resized_splitter->output[1]->buffer_size);
+    if (!handles.yuvPool) {
+        logError("mmal_port_pool_create failed for mjpeg encoder output", __func__);
+        // TODO: what error code for this?
+        return MMAL_ENOMEM;
     }
-    num = mmal_queue_length(handles.mjpegEncoderPool->queue);
-    for (i = 0; i < num; i++) {
-        MMAL_BUFFER_HEADER_T *buffer = mmal_queue_get(handles.mjpegEncoderPool->queue);
-
-        if (!buffer) {
-            logError("mmal_queue_get failed for mjpeg encoder pool", __func__);
-        } else {
-            status = mmal_port_send_buffer(mjpegEncoderOutputPort, buffer);
-            if (status != MMAL_SUCCESS) {
-                logError("mmal_port_send_buffer failed for mjpeg encoder output port", __func__);
-                break;
-            }
-        }
-    }
+    
 
 
+    handles.h264_encoder->output[0]->userdata = (struct MMAL_PORT_USERDATA_T *)&h264CallbackUserdata;
+    logInfo("Sending buffers to h264 port");
+    send_buffers_to_port(handles.h264_encoder->output[0], handles.h264_encoder_pool->queue);
 
-    // YUV MOTION STUFF
-    splitterYuvPort->userdata = (struct MMAL_PORT_USERDATA_T *)&yuvCallbackUserdata;
+    handles.mjpeg_encoder->output[0]->userdata = (struct MMAL_PORT_USERDATA_T *)&mjpegCallbackUserdata;
+    logInfo("Sending buffers to mjpeg port");
+    send_buffers_to_port(handles.mjpeg_encoder->output[0], handles.mjpeg_encoder_pool->queue);
 
-    if (settings.verbose) {
-        logInfo("Enabling splitter yuv output port");
-    }
+    handles.resized_splitter->output[1]->userdata = (struct MMAL_PORT_USERDATA_T *)&yuvCallbackUserdata;
+    logInfo("Sending buffers to YUV port");
+    send_buffers_to_port(handles.resized_splitter->output[1], handles.yuvPool->queue);
 
-    // Enable the splitter output port and tell it its callback function
-    status = mmal_port_enable(splitterYuvPort, yuvCallback);
-    if (status != MMAL_SUCCESS) {
-        logError("mmal_port_enable failed for yuv output", __func__);
-        // disconnect and disable first?
-        destroyMjpegEncoder(&handles, &settings);
-        destroyH264Encoder(&handles, &settings);
-        destroySplitter(&handles, &settings);
-        destroyCamera(&handles, &settings);
-        return EX_ERROR;
-    }
 
-    if (settings.verbose) {
-        logInfo("Providing buffers to yuv output");
-    }
-    buffer = mmal_queue_get(handles.yuvPool->queue);
-    while (buffer) {
-        status = mmal_port_send_buffer(splitterYuvPort, buffer);
-        if (status != MMAL_SUCCESS) {
-            break;
-        }
-        buffer = mmal_queue_get(handles.yuvPool->queue);
-    }
-
+    // NOW TURN ON THE CAMERA
 
     // TODO: does this really enable capture? necessary?
-    status = mmal_port_parameter_set_boolean(cameraVideoPort, MMAL_PARAMETER_CAPTURE, 1);
+    status = mmal_port_parameter_set_boolean(handles.camera->output[CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 1);
     if (status != MMAL_SUCCESS) {
         logError("Toggling MMAL_PARAMETER_CAPTURE to 1 failed", __func__);
         // TODO: unwind
@@ -2306,6 +2630,11 @@ int main(int argc, const char **argv) {
     // TODO: the below logic is broken
     // do i disable leaf ports first, then connections?
 
+    status = mmal_port_parameter_set_boolean(handles.camera->output[CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 0);
+    if (status != MMAL_SUCCESS) {
+        logError("Toggling MMAL_PARAMETER_CAPTURE to 0 failed", __func__);
+        // TODO: unwind
+    }
 
     
     // Disable all our ports that are not handled by connections
@@ -2313,38 +2642,18 @@ int main(int argc, const char **argv) {
     //disablePort(&settings, cameraVideoPort, "camera");
     //disablePort(&settings, splitterH264Port, "splitter h264");
     //disablePort(&settings, splitterMjpegPort, "splitter mjpeg");
-    disablePort(&settings, splitterYuvPort, "splitter yuv");
+    disable_port(handles.resized_splitter->output[1], "splitter yuv");
     // disabling this causes a segfault ...
-    disablePort(&settings, h264EncoderOutputPort, "h264 encoder output");
-    disablePort(&settings, mjpegEncoderOutputPort, "mjpeg encoder output");
+    disable_port(handles.h264_encoder->output[0], "h264 encoder output");
+    disable_port(handles.mjpeg_encoder->output[0], "mjpeg encoder output");
 
     logInfo("hi 5");
-    destroyConnection(&settings, handles.h264EncoderConnection, "h264 encoder");
-    destroyConnection(&settings, handles.mjpegEncoderConnection, "mjpeg encoder");
-    destroyConnection(&settings, handles.splitterConnection, "splitter");
+    destroy_splitter(handles.resized_splitter, handles.resized_splitter_connection);
+    destroy_resizer(handles.resizer, handles.resizer_connection);
+    destroy_h264_encoder(handles.h264_encoder, handles.h264_encoder_connection, handles.h264_encoder_pool);
+    destroy_splitter(handles.full_splitter, handles.full_splitter_connection);
+    destroy_camera(handles.camera);
 
-    logInfo("hi 6");
-    disableComponent(&settings, handles.h264_encoder, "h264 encoder");
-    disableComponent(&settings, handles.mjpeg_encoder, "mjpeg encoder");
-    disableComponent(&settings, handles.splitter, "splitter");
-    disableComponent(&settings, handles.camera, "camera");
-
-    logInfo("hi 7");
-    destroyH264Encoder(&handles, &settings);
-    destroyMjpegEncoder(&handles, &settings);
-
-    logInfo("hi 8");
-    // TODO: destroy pools?
-    // destroy yuv buffer pool
-    if (handles.yuvPool) {
-        if (settings.verbose) {
-            logInfo("Destroying yuv pool");
-        }
-        mmal_port_pool_destroy(splitterYuvPort, handles.yuvPool);
-        handles.yuvPool = NULL;
-    }
-    destroySplitter(&handles, &settings);
-    destroyCamera(&handles, &settings);
 
 
     // clean up the processing queues
