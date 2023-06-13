@@ -29,6 +29,9 @@ body {
 
 body, button, input, textarea {
 }
+img {
+    width: 100%;
+}
 button, #tags > div {
     background-color: #f7ca88;
     border: 1px solid;
@@ -158,11 +161,11 @@ div.search input {
 
 .main {
     display: grid;
-    grid-template-columns: 33% 33% 33%;
+    grid-template-columns: 50% 50%;
 }
 @media screen and (min-width: 370px) {
     .main {
-        grid-template-columns: 50% 50%;
+        grid-template-columns: 33% 33% 33%;
     }
 }
 
@@ -223,8 +226,11 @@ div.search input {
 <body id="body">
 
 <div id="nav">
-1 - car | 2 - person | 3 - bike | 4 - golf-cart | 5 - scooter
 </div>
+
+<div id="streams" class="main" style="display: grid;grid-template-columns: 50% 50%; gap: 1px;">
+</div>
+
 <div id="tags"></div>
 
 <div id="main" class="main">
@@ -868,6 +874,47 @@ var tagVideo = function(tagId) {
 
 videos.init();
 //videos.load();
+
+let streams = document.getElementById('streams');
+let cameras = {};
+setInterval(
+	function() {
+		ajax.get('/api/cameras.json', function(err, data) {
+			if (err) {
+				console.log(err);
+				return;
+			}
+			for (let key in cameras) {
+				if (!(key in data)) {
+					// remove
+					streams.removeChild( cameras[key] );
+					delete cameras[key];
+					delete handles[key];
+				}
+			}
+			for (let key in data) {
+				if (key in cameras) {
+				} else {
+					console.log('not found ' + key);
+					// add
+					//let id = 'cam_' + getRandomInt(1, 200);
+
+					let img = tag('IMG', {}, []);
+					img.src = 'http://' + key + ':8080/stream.mjpeg?ts=' + Date.now();
+
+					cameras[ key ] = tag('DIV', {}, [img]);
+					/*
+					if (!(key == '192.168.1.167' || key == '192.168.1.177')) {
+						handles[key] = img;
+					}
+					*/
+					streams.appendChild(cameras[key]);
+				}
+			}
+		});
+	},
+	1000
+);
 
 </script>
 </body>

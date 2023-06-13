@@ -17,18 +17,22 @@ import json
 import mysql.connector
 import os
 import re
+import signal
+import socket
+import threading
 import time
 
 # i dont remember how this works
 offsetPath = '/home/user/projects/surveillance-ui/public'
 offsetPath = '/mnt/media/surveillance'
 
+cameras = {} # holds list of cameras that have announced recently
 app = Flask(__name__)
 
 def get_db():
     fp = open('../config.json', 'r')
     config = json.load(fp)
-    return mysql.connector.connect(user=config.username, password=config.password, host=config.host, database=config.database)
+    return mysql.connector.connect(user=config['username'], password=config['password'], host=config['host'], database=config['database'])
     #return sqlite3.connect('/home/user/projects/surveillance-videos/files.sqlite3')
 
 def tag_sort_key(item):
@@ -193,7 +197,53 @@ def tagVideo(locationId):
        
     db.close()
     return json.dumps(out)
-    
+
+@app.route("/cameras.json", methods=['GET'])
+def getCameras():
+    global cameras
+    # prune old cameras
+    cutoff = time.time() - 10.0
+    for key in cameras:
+        ts = cameras[key]
+        if ts < cutoff:
+            print('removing %s' % key)
+            del cameras[key]
+    #self.send_response(200)
+    #self.send_header('Content-Type', 'application/json')
+    #self.end_headers()
+    #self.wfile.write( json.dumps(cameras).encode() )
+    return json.dumps(cameras)
+
+
+class CameraTracker(threading.Thread):
+    def __init__(self):
+        threading.Thread.__init__(self)
+        self.running = True
+        self.start()
+
+    def run(self):
+        global cameras
+        UDP_IP = "0.0.0.0"
+        UDP_PORT = 5001
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((UDP_IP, UDP_PORT))
+
+        while self.running:
+            data, addr = sock.recvfrom(1024) # buffer size is 1024 bytes
+            #print("Camera heartbeat %s" % addr[0])
+            cameras[ addr[0] ] = time.time()
+
+def signal_handler(sig, frame):
+    global cameraTracker
+    cameraTracker.running = False
+    # how to close flask, too?
+    print('Exiting ...')
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
 if __name__ == '__main__':
+    cameraTracker = CameraTracker()
     app.run(host='localhost', port=5004, debug=True)
 
