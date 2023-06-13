@@ -1,15 +1,17 @@
 # PiMera
 
-PiMera is security and critter camera application for Raspberry Pi computers and the Rasperry Pi camera modules. It saves H264 video whenever motion is detected within the camera frame. I'm striving for 1640x922@30fps, even on a Pi Zero W.
-
+PiMera is a security and critter camera application for Raspberry Pi computers and the Rasperry Pi camera modules. It saves H264 video whenever motion is detected within the camera frame. I'm striving for 1640x922 at 30fps (see note at end of this section), even on a Pi Zero W. 
 I imagine you're thinking that most people use MotionEyeOS for this purpose, and you'd be right. But I like to tinker, to learn by doing, and I enjoy writing C, so here we are.
+
+Note: 1640x922 is an odd resolution, but that resolution captures using the Pi Camera module's full field-of-view. This is helpful if you don't have a wide angle lens and want to capture everything the camera is capable of seeing.
+
 
 
 # Current Status
 
 Very much a work in progress. The code needs many types of cleanup, but it should work for you.
 
-For now, I'm focused on making it performant on the Pi Zero W. The size and power makes it the perfect critter cam.
+For now, I'm focused on making it performant on the Pi Zero W because it's small size and low power requirements make it the perfect critter cam.
 
 ## Working Features
 
