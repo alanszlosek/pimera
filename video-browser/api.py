@@ -1,16 +1,3 @@
-# TODO
-# 
-# * convert this to a flask app so we can fetch video JSON via API call
-# * return main HTML for / request
-# * /videos.json
-# * POST /delete/video
-#     * this one will simply move the video to a "deleted" folder
-#     * we don't actually want ot delete
-#     * need to sanitize path to only include alphanum and an extension
-#     * trigger soft delete via the delete key .... set those videos to have a red background
-#     * trap backspace so we don't actually go back
-# 
-
 from flask import g, Flask, request
 import glob
 import json
@@ -103,10 +90,6 @@ def getTags():
 @app.route("/files")
 def getFiles():
     global offsetPath
-    #files = glob.glob(basePath + '/*.mp4', recursive=True)
-    #files.sort(reverse=True)
-    #files = list(map(os.path.basename, files))
-    #return json.dumps(files)
 
     db = get_db()
     c = db.cursor(buffered=True)
@@ -152,51 +135,49 @@ def getFiles():
     return json.dumps(out)
 
 
-@app.route("/video/archive/<int:locationId>", methods=['POST'])
-def archiveVideo(locationId):
-    #os.rename(basePath + filename, archivePath + filename)
-    db = get_db()
-    c = db.cursor()
-    c.execute('UPDATE videos SET status=status|1 WHERE id=?', (locationId,))
+# @app.route("/video/archive/<int:locationId>", methods=['POST'])
+# def archiveVideo(locationId):
+#     #os.rename(basePath + filename, archivePath + filename)
+#     db = get_db()
+#     c = db.cursor()
+#     c.execute('UPDATE videos SET status=status|1 WHERE id=?', (locationId,))
 
-    db.commit()
-    db.close()
-    return '[]'
+#     db.commit()
+#     db.close()
+#     return '[]'
 
-@app.route("/video/tag/<int:locationId>", methods=['POST'])
-def tagVideo(locationId):
-    posted = request.get_json()
-    tagId = posted['tagId']
-    #os.rename(basePath + filename, archivePath + filename)
-    db = get_db()
-    c = db.cursor()
-    c.execute('SELECT id FROM videos WHERE id=?', (locationId,))
-    row = c.fetchone()
-    videoId = row[0]
-    
-    print(tagId)
-    
-    c.execute('SELECT tagId FROM video_tag WHERE id=? AND tagId=?', (videoId,tagId))
-    rows = c.fetchall()
-    print(rows)
-    if len(rows) == 0:
-        # add tag
-        c.execute('INSERT INTO video_tag (tagId,id) VALUES(?,?)', (tagId,videoId))
-    elif len(rows) == 1:
-        # remove tag
-        c.execute('DELETE FROM video_tag WHERE id=? AND tagId=?', (videoId,tagId))
+# @app.route("/video/tag/<int:locationId>", methods=['POST'])
+# def tagVideo(locationId):
+#     posted = request.get_json()
+#     tagId = posted['tagId']
+#     #os.rename(basePath + filename, archivePath + filename)
+#     db = get_db()
+#     c = db.cursor()
+#     c.execute('SELECT id FROM videos WHERE id=?', (locationId,))
+#     row = c.fetchone()
+#     videoId = row[0]
+#     print(tagId)
+#     c.execute('SELECT tagId FROM video_tag WHERE id=? AND tagId=?', (videoId,tagId))
+#     rows = c.fetchall()
+#     print(rows)
+#     if len(rows) == 0:
+#         # add tag
+#         c.execute('INSERT INTO video_tag (tagId,id) VALUES(?,?)', (tagId,videoId))
+#     elif len(rows) == 1:
+#         # remove tag
+#         c.execute('DELETE FROM video_tag WHERE id=? AND tagId=?', (videoId,tagId))
 
-    db.commit()
+#     db.commit()
     
-    c.execute('SELECT t.tag FROM video_tag AS ft LEFT JOIN tags AS t ON (ft.tagId=t.id) WHERE ft.id=? ORDER BY t.tag', (videoId,))
-    out = {
-        'tags':[]
-    }
-    for row in c:
-        out['tags'].append(row[0])
+#     c.execute('SELECT t.tag FROM video_tag AS ft LEFT JOIN tags AS t ON (ft.tagId=t.id) WHERE ft.id=? ORDER BY t.tag', (videoId,))
+#     out = {
+#         'tags':[]
+#     }
+#     for row in c:
+#         out['tags'].append(row[0])
        
-    db.close()
-    return json.dumps(out)
+#     db.close()
+#     return json.dumps(out)
 
 @app.route("/cameras.json", methods=['GET'])
 def getCameras():
