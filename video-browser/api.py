@@ -1,4 +1,4 @@
-from flask import g, Flask, request
+from flask import g, Flask, request, send_from_directory
 import glob
 import json
 import mysql.connector
@@ -27,7 +27,7 @@ def tag_sort_key(item):
 
 @app.route("/")
 def getRoot():
-    return "Hello World!"
+    return send_from_directory('public', 'index.html')
 
 @app.route("/tags")
 def getTags():
