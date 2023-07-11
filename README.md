@@ -1,10 +1,34 @@
 # PiMera
 
-PiMera is a security and critter camera application for Raspberry Pi computers and the Rasperry Pi camera modules. It saves H264 video whenever motion is detected within the camera frame. I'm striving for 1640x922 at 30fps (see note at end of this section), even on a Pi Zero W. 
+PiMera hopes to be an end-to-end security/critter camera application, with a web UI for browsing recordings.
+
+The camera application runs on Raspberry Pi computers that use the Rasperry Pi camera modules. It saves H264 video whenever motion is detected within the camera frame. I'm striving for 1640x922 at 30fps (see note at end of this section), even on a Pi Zero W.
+
+The processing scripts and video browsing UI use Python, MySQL, and JavaScript.
+
+## Repository layout
+
+* `mmal-version/` - This is the C code for the camera application that records when motion is detected.
+* `processing/` - Scripts to copy h264 videos from camera nodes, catalog them in a database, run motion detection on them and save detected classes as tags in the database. Requirements: ffmpeg, python3
+* `processing/hosts.txt` - IP addresses of the RasPis to copy videos from.
+* `video-browser/` - The web UI for browsing videos by tag (detected objects) and date. **See screenshot below.** Browsing by tag works, and quick-and-dirty stream browsing does too, but I have a redesign planned to improve UX.
+* `config.json` - Config file that contains MySQL connection info used by `processing/` and `video-browser/` Python code.
+
+## Screenshots
+
+Quick-and-dirty web UI that shows progressive filtering by tags (ie. detected objects). Numbers on each button represent number of videos with that tag and the currently selected tags ( those in dark blue).
+
+![Video Browser UI](screenshots/video-browser.png)
+
+A cardinal detected by the YOLOv8 object detection library.
+
+![Cardinal](screenshots/bird.jpg)
+
+## Notes
+
 I imagine you're thinking that most people use MotionEyeOS for this purpose, and you'd be right. But I like to tinker, to learn by doing, and I enjoy writing C, so here we are.
 
-Note: 1640x922 is an odd resolution, but that resolution captures using the Pi Camera module's full field-of-view. This is helpful if you don't have a wide angle lens and want to capture everything the camera is capable of seeing.
-
+PiMera is currently configured for 1640x922, and yes that's an odd resolution. That resolution captures using the Pi Camera module's full field-of-view. This is helpful if you don't have a wide angle lens and want to capture everything the camera is capable of seeing.
 
 
 # Current Status
@@ -44,7 +68,7 @@ I'm developing and testing with:
 
 # Installation
 
-## Pre-requisites
+## Prerequisites
 
 * Raspberry Pi Zero W, 3B+, or 4
 * Pi Camera module
@@ -65,10 +89,9 @@ Note the IP address of your Pi when it connects to your network.
 
 In `mmal-version/` run `pimera`.
 
-Open `http://YOUR_PI_IP:808` in your browser. You should see a 2fps stream.
+Open `http://YOUR_PI_IP:8080` in your browser. You should see a 2fps stream.
 
-The defaults in `settings.ini` should work fine for the first test.
-* Open settings.ini, but defaults should work fine
+The defaults in `mmal-version/settings.ini` should work fine for the first test.
 
 # History
 
