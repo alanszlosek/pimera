@@ -62,6 +62,12 @@ typedef struct {
     unsigned int* regions;
     unsigned int regions_length;
     unsigned int changed_pixels_threshold;
+    struct {
+        unsigned int offset;
+        unsigned int row_length;
+        unsigned int stride;
+        unsigned int num_rows;
+    } region;
 
     char boundary[81];
     int boundaryLength;
@@ -1961,24 +1967,16 @@ void yuvCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         mmal_buffer_header_mem_unlock(buffer);
 
     } else if (frame_counter >= motionDetection.detection_at) {
+        // Perform motion detection
         clock_t begin = clock();
 
         mmal_buffer_header_mem_lock(buffer);
         uint8_t* p = motionDetection.previousFrame;
         uint8_t* c = buffer->data;
         unsigned int changed_pixels = 0;
+        unsigned int pixel_delta = 0;
 
         /*
-        int y_length = 400 * 400; //settings->mjpeg.y_length;
-        for (int i = 0; i < y_length; i++) {
-            if (abs(c[i] - p[i]) > 50) {
-                changed_pixels++;
-            }
-        }
-        */
-
-        //logInfo("YUVlength: %d", buffer->length);
-
         for (int i = 0; i < motionDetection.regions_length; i += 2) {
             int start = motionDetection.regions[i];
             int end = motionDetection.regions[i + 1];
@@ -1989,10 +1987,45 @@ void yuvCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
                 }
             }
         }
+        */
+        
+        /*
+        for regions we really just need:
+        start offset
+        length of row
+        stride to next row from offset
+        how many rows
+        */
+        bool changed = FALSE;
+        for (int row = 0; row < motionDetection.region.num_rows; row++) {
+            uint8_t* a, b;
+            unsigned int offset = motionDetection.region.offset + (motionDetection.region.stride * row);
+            uint8_t *c_start = c + offset;
+            uint8_t *p_start = p + offset;
+            uint8_t *c_end = c_start + motionDetection.region.row_length;
+            uint8_t *p_end = p_start + motionDetection.region.row_length;
+
+            // TODO: add SIMD ops and stride
+            for (; c_start < c_end; c_start++, p_start++) {
+                pixel_delta += abs(c[j] - p[j]);
+            }
+
+            // bail if we've already hit the threshold
+            if (pixel_delta > settings->pixel_delta_threshold) {
+                break;
+            }
+
+        }
 
 
 
         pthread_mutex_lock(&motionDetectionMutex);
+
+        // TODO: this is new conditional, need setttings var too
+        if (pixel_delta > settings->pixel_delta_threshold) {
+            break;
+        }
+
         if (changed_pixels > settings->changed_pixels_threshold) {
             motionDetection.motion_count++;
             // if motion is detected, check again in 2 seconds
