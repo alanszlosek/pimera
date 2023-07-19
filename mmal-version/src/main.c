@@ -59,13 +59,15 @@ typedef struct {
     int stream_sleep;
     uint8_t *previousFrame;
 
-    unsigned int* regions;
-    unsigned int regions_length;
+    // holds yuv data so we can spread detection across multiple yuvCallback() calls
+    uint8_t* yuvBuffer;
     unsigned int changed_pixels_threshold;
+    unsigned int pixel_delta;
     struct {
         unsigned int offset;
         unsigned int row_length;
         unsigned int stride;
+        unsigned int half_rows;
         unsigned int num_rows;
     } region;
 
@@ -80,6 +82,9 @@ typedef struct {
 } MOTION_DETECTION_T;
 MOTION_DETECTION_T motionDetection;
 pthread_mutex_t motionDetectionMutex;
+
+// Used by yuvCallback()
+unsigned int pixel_delta_threshold = 280000;
 
 // TODO: change this to fixed list of MMAL buffers
 uint8_t* h264_buffer;
@@ -142,6 +147,9 @@ void clear_connections(connection* head) {
 struct pollfd http_fds[MAX_POLL_FDS];
 int http_fds_count = 0;
 
+// Restart camera
+pthread_mutex_t restart_mutex;
+int restart = 0;
 
 
 typedef struct HANDLES_S HANDLES;
@@ -190,6 +198,7 @@ struct SETTINGS_S {
     
     int motion_check_frequency; // default 3 per second
     unsigned int changed_pixels_threshold;
+    unsigned int pixel_delta_threshold;
     char objectDetectionEndpoint[128];
     int verbose;
     bool debug;
@@ -270,7 +279,20 @@ void logInfo(char const* fmt, ...) {
     fflush(stdout);
 }
 
+void reconfigureRegion(SETTINGS* settings) {
+    unsigned int x_start, x_end, y_start, y_end;
+    x_start = settings->region[0];
+    y_start = settings->region[1];
+    x_end = settings->region[2];
+    y_end = settings->region[3];
+    printf("New detection region: %d, %d, %d, %d\n", x_start, y_start, x_end, y_end);
 
+    motionDetection.region.offset = (y_start * settings->mjpeg.vcosWidth) + x_start;
+    motionDetection.region.num_rows = y_end - y_start;
+    motionDetection.region.half_rows = motionDetection.region.num_rows / 2;
+    motionDetection.region.row_length = x_end - x_start;
+    motionDetection.region.stride = settings->mjpeg.vcosWidth;
+}
 void initDetection(SETTINGS* settings) {
     motionDetection.detection_sleep = settings->h264.fps / settings->motion_check_frequency;
     motionDetection.detection_at = motionDetection.detection_sleep;
@@ -278,51 +300,28 @@ void initDetection(SETTINGS* settings) {
     motionDetection.stream_sleep = settings->h264.fps / 3;
 
     motionDetection.previousFrame = (uint8_t*) malloc( settings->mjpeg.y_length );
+    motionDetection.yuvBuffer = (uint8_t*) malloc( settings->mjpeg.y_length );
 
     motionDetection.motion_count = 0;
 
     strncpy(motionDetection.boundary, "--HATCHA\r\nContent-Type: image/jpeg\r\nContent-length: ", 80);
     motionDetection.boundaryLength = strlen(motionDetection.boundary);
 
-
+    /*
     int start_x = 100;
     int start_y = 100;
     int width = 100;
     int height = 100;
     int end_y = start_y + height;
     int end_x = start_x + width;
-
-    // Based on detection region, make offset pairs (start, stop)
-    motionDetection.regions_length = (settings->region[3] - settings->region[1]) * 2;
-    logInfo("Allocating %d", motionDetection.regions_length);
-    motionDetection.regions = (unsigned int*) calloc(motionDetection.regions_length, sizeof(unsigned int));
-
-    unsigned int x_start, x_end, y_start, y_end;
-    x_start = settings->region[0];
-    y_start = settings->region[1];
-    x_end = settings->region[2];
-    y_end = settings->region[3];
-
-    unsigned int i = 0;
-    for (unsigned int y = y_start; y < y_end; y++) {
-        unsigned int offset = (y * settings->mjpeg.vcosWidth) + x_start;
-
-        motionDetection.regions[ i++ ] = offset;
-        motionDetection.regions[ i++ ] = offset + x_end;
-    }
-
-
-    /*
-    for (int y = start_y; y < )
-    for (x = start)
-
-    i = (y * settings->mjpeg.stride) + x;
     */
 
+    reconfigureRegion(settings);
 }
+
 void freeDetection() {
     free(motionDetection.previousFrame);
-    free(motionDetection.regions);
+    free(motionDetection.yuvBuffer);
 }
 
 void setDefaultSettings(SETTINGS* settings) {
@@ -343,6 +342,8 @@ void setDefaultSettings(SETTINGS* settings) {
     settings->region[2] = 100;
     settings->region[3] = 100;
     settings->changed_pixels_threshold = 500;
+    settings->pixel_delta_threshold = 280000;
+    pixel_delta_threshold = settings->pixel_delta_threshold;
 
     settings->vcosWidth = ALIGN_UP(settings->width, 16);
     settings->vcosHeight = ALIGN_UP(settings->height, 16);
@@ -1287,6 +1288,7 @@ void mjpegCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
 
     //logInfo("got mjpeg");
 
+    // TODO: get rid of this
     pthread_mutex_lock(&mjpeg_concurrent_mutex);
     if (mjpeg_concurrent > 0) {
 	    printf("mjpegCallback already in process\n");
@@ -1300,9 +1302,10 @@ void mjpegCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         mmal_buffer_header_release(buffer);
         send_buffers_to_port(port, userdata->handles->mjpeg_encoder_pool->queue);
 
-	pthread_mutex_lock(&mjpeg_concurrent_mutex);
-	mjpeg_concurrent--;
-	pthread_mutex_unlock(&mjpeg_concurrent_mutex);
+        // TODO: get rid
+        pthread_mutex_lock(&mjpeg_concurrent_mutex);
+        mjpeg_concurrent--;
+        pthread_mutex_unlock(&mjpeg_concurrent_mutex);
         return;
     }
 
@@ -1311,9 +1314,9 @@ void mjpegCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         mmal_buffer_header_release(buffer);
         send_buffers_to_port(port, userdata->handles->mjpeg_encoder_pool->queue);
 
-	pthread_mutex_lock(&mjpeg_concurrent_mutex);
-	mjpeg_concurrent--;
-	pthread_mutex_unlock(&mjpeg_concurrent_mutex);
+        pthread_mutex_lock(&mjpeg_concurrent_mutex);
+        mjpeg_concurrent--;
+        pthread_mutex_unlock(&mjpeg_concurrent_mutex);
         return;
     }
 
@@ -1348,6 +1351,7 @@ void mjpegCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
 
     send_buffers_to_port(port, userdata->handles->mjpeg_encoder_pool->queue);
 
+    // TODO: get rid
     pthread_mutex_lock(&mjpeg_concurrent_mutex);
     mjpeg_concurrent--;
     pthread_mutex_unlock(&mjpeg_concurrent_mutex);
@@ -1946,6 +1950,13 @@ static void destroyH264Encoder(HANDLES *handles, SETTINGS *settings) {
 
 
 // BEGIN YUV FUNCTIONS
+// for first iteration, this just copies into previous buffer
+uint8_t which_rows = 0;
+// TODO: update this according to settings, and when settings change (during camera pause/resume)
+
+// this is declared higher so other functions can use it
+//unsigned int pixel_delta_threshold = 100;
+unsigned int pixel_delta_temp;
 void yuvCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     CALLBACK_USERDATA *userdata;
     SETTINGS *settings;
@@ -1956,39 +1967,27 @@ void yuvCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     //logInfo("got yuv");
     frame_counter++;
 
+    // TODO: refactor this without locking
+    // perhaps increment local counter and compare buffer timestamp
     pthread_mutex_lock(&statsMutex);
     stats.fps++;
     pthread_mutex_unlock(&statsMutex);
 
-    // Does buffer have data?
-    if (frame_counter == 1) {
+    clock_t begin, end;
+    if (frame_counter >= motionDetection.detection_at) {
+        // Perform motion detection
+        begin = clock();
+
         mmal_buffer_header_mem_lock(buffer);
-        memcpy( motionDetection.previousFrame, buffer->data, settings->mjpeg.y_length );
+        memcpy(motionDetection.yuvBuffer, buffer->data, settings->mjpeg.y_length);
         mmal_buffer_header_mem_unlock(buffer);
 
-    } else if (frame_counter >= motionDetection.detection_at) {
-        // Perform motion detection
-        clock_t begin = clock();
-
-        mmal_buffer_header_mem_lock(buffer);
         uint8_t* p = motionDetection.previousFrame;
-        uint8_t* c = buffer->data;
-        unsigned int changed_pixels = 0;
-        unsigned int pixel_delta = 0;
+        uint8_t* c = motionDetection.yuvBuffer;
 
-        /*
-        for (int i = 0; i < motionDetection.regions_length; i += 2) {
-            int start = motionDetection.regions[i];
-            int end = motionDetection.regions[i + 1];
 
-            for (int j = start; j < end; j++) {
-                if (abs(c[j] - p[j]) > 50) {
-                    changed_pixels++;
-                }
-            }
-        }
-        */
-        
+        which_rows = 2;
+        pixel_delta_temp = 0;
         /*
         for regions we really just need:
         start offset
@@ -1996,79 +1995,120 @@ void yuvCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         stride to next row from offset
         how many rows
         */
-        bool changed = FALSE;
-        for (int row = 0; row < motionDetection.region.num_rows; row++) {
-            uint8_t* a, b;
+        // TODO: i think i'm looping over these wrong
+        // seems data might be in different order
+        for (int row = 0; row < motionDetection.region.half_rows; row++) {
             unsigned int offset = motionDetection.region.offset + (motionDetection.region.stride * row);
             uint8_t *c_start = c + offset;
             uint8_t *p_start = p + offset;
             uint8_t *c_end = c_start + motionDetection.region.row_length;
-            uint8_t *p_end = p_start + motionDetection.region.row_length;
 
             // TODO: add SIMD ops and stride
             for (; c_start < c_end; c_start++, p_start++) {
-                pixel_delta += abs(c[j] - p[j]);
+                uint8_t delta = abs(*c_start - *p_start);
+                if (delta > 50) {
+                    pixel_delta_temp += delta;
+                }
             }
-
-            // bail if we've already hit the threshold
-            if (pixel_delta > settings->pixel_delta_threshold) {
-                break;
-            }
-
         }
+        mmal_buffer_header_mem_unlock(buffer);
+        end = clock();
 
+        printf("DETECTION1. Pixel delta: %d threshold: %d Time: %f\n", pixel_delta_temp, pixel_delta_threshold, (double)(end - begin) / CLOCKS_PER_SEC);
 
-
-        pthread_mutex_lock(&motionDetectionMutex);
-
-        // TODO: this is new conditional, need setttings var too
-        if (pixel_delta > settings->pixel_delta_threshold) {
-            break;
-        }
-
-        if (changed_pixels > settings->changed_pixels_threshold) {
+        if (pixel_delta_temp > pixel_delta_threshold) {
+            pthread_mutex_lock(&motionDetectionMutex);
+            // TODO: can still lock around here, but don't need lock above
             motionDetection.motion_count++;
+            motionDetection.pixel_delta = pixel_delta_temp;
             // if motion is detected, check again in 2 seconds
             motionDetection.detection_at = frame_counter + (settings->h264.fps * 2);
+            pthread_mutex_unlock(&motionDetectionMutex);
+
             // only copy if motion detected ....
             // this lets us detect slow moving items
             memcpy(motionDetection.previousFrame, buffer->data, settings->mjpeg.y_length);
+
+            // skip second half
+            which_rows = 1;
         } else {
+            pthread_mutex_lock(&motionDetectionMutex);
+            // TODO: if not reach threshold, set detection_at to frame_counter+1
+            // so we process rest of lines in next callback
             motionDetection.motion_count = 0;
+            motionDetection.pixel_delta = pixel_delta_temp;
             motionDetection.detection_at = frame_counter + motionDetection.detection_sleep;
+            pthread_mutex_unlock(&motionDetectionMutex);
         }
-        pthread_mutex_unlock(&motionDetectionMutex);
 
+
+    } else if (which_rows == 2) {
+        which_rows = 1;
+        begin = clock();
+        
+        uint8_t* p = motionDetection.previousFrame;
+        uint8_t* c = motionDetection.yuvBuffer;
+        for (int row = motionDetection.region.half_rows; row < motionDetection.region.num_rows; row++) {
+            unsigned int offset = motionDetection.region.offset + (motionDetection.region.stride * row);
+            uint8_t *c_start = c + offset;
+            uint8_t *p_start = p + offset;
+            uint8_t *c_end = c_start + motionDetection.region.row_length;
+
+            for (; c_start < c_end; c_start++, p_start++) {
+                uint8_t delta = abs(*c_start - *p_start);
+                if (delta > 50) {
+                    pixel_delta_temp += delta;
+                }
+            }
+        }
+        end = clock();
+
+        printf("DETECTION2. Pixel delta: %d threshold: %d Time: %f\n", pixel_delta_temp, pixel_delta_threshold, (double)(end - begin) / CLOCKS_PER_SEC);
+
+        // TODO: refactor this to compare delta against non-mutex threshold
+        if (pixel_delta_temp > pixel_delta_threshold) {
+            pthread_mutex_lock(&motionDetectionMutex);
+            // TODO: can still lock around here, but don't need lock above
+            motionDetection.motion_count++;
+            motionDetection.pixel_delta = pixel_delta_temp;
+            // if motion is detected, check again in 2 seconds
+            motionDetection.detection_at = frame_counter - 1 + (settings->h264.fps * 2);
+            pthread_mutex_unlock(&motionDetectionMutex);
+            // only copy if motion detected ....
+            // this lets us detect slow moving items
+            memcpy(motionDetection.previousFrame, buffer->data, settings->mjpeg.y_length);
+
+        } else {
+            pthread_mutex_lock(&motionDetectionMutex);
+            // TODO: if not reach threshold, set detection_at to frame_counter+1
+            // so we process rest of lines in next callback
+            motionDetection.motion_count = 0;
+            motionDetection.pixel_delta = pixel_delta_temp;
+            // this should already be set correctly
+            //motionDetection.detection_at = frame_counter + motionDetection.detection_sleep;
+            pthread_mutex_unlock(&motionDetectionMutex);
+        }
+
+    } else if (which_rows == 0) {
+        mmal_buffer_header_mem_lock(buffer);
+        // First run, copy into previous
+        memcpy(motionDetection.previousFrame, buffer->data, settings->mjpeg.y_length );
         mmal_buffer_header_mem_unlock(buffer);
-
-        clock_t end = clock();
-        //printf("TIME. Motion Detection: %f\n", (double)(end - begin) / CLOCKS_PER_SEC);
-
-        printf("DETECTION. Regions: %d Changed pixels: %d threshold: %d Time: %f\n", motionDetection.regions_length, changed_pixels, settings->changed_pixels_threshold, (double)(end - begin) / CLOCKS_PER_SEC);
+        mmal_buffer_header_release(buffer);
+        send_buffers_to_port(port, userdata->handles->yuvPool->queue);
+        // next time will compare rows
+        which_rows = 1;
+        return;
     }
 
     mmal_buffer_header_release(buffer);
-
-    // TODO: refactor this block
     send_buffers_to_port(port, userdata->handles->yuvPool->queue);
-    /*
-    if (port->is_enabled) {
-        MMAL_STATUS_T status;
-        MMAL_BUFFER_HEADER_T* new_buffer;
-        while ( (new_buffer = mmal_queue_get(userdata->handles->yuvPool->queue)) ) {
-            status = mmal_port_send_buffer(port, new_buffer);
-            if (status != MMAL_SUCCESS) {
-                //logError("mmal_port_send_buffer failed, no buffer to return to yuv port\n", __func__);
-                break;
-            }
-        }
-    }
-    */
 }
 // END YUV FUNCTIONS
 
 
 // HTTP SERVER STUFF
+
 static int http_server_cleanup_arg = 0;
 static void http_server_thread_cleanup(void *arg) {
     pthread_mutex_unlock(&running_mutex);
@@ -2202,13 +2242,59 @@ static void *httpServer(void *v) {
                         pthread_mutex_unlock(&motion_connections_mutex);
                     
                     } else if (strncmp(request, "GET /status.json HTTP", 21) == 0) {
-                        response2_length = snprintf(response2, response2_max, "{\"width\": \"%d\", \"height\":\"%d\"}", settings->width, settings->height);
+                        pthread_mutex_lock(&motionDetectionMutex);
+                        int motion_count = motionDetection.motion_count;
+                        int delta = motionDetection.pixel_delta;
+                        pthread_mutex_unlock(&motionDetectionMutex);
+                        response2_length = snprintf(response2, response2_max, "{\"width\": \"%d\", \"height\":\"%d\", \"motion\": %d, \"delta\": %d}", settings->width, settings->height, motion_count, delta);
 
                         response1_length = snprintf(response1, 1024, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n", response2_length);
 
                         ret = sendSocket(http_fds[i].fd, response1, response1_length);
                         ret = sendSocket(http_fds[i].fd, response2, response2_length);
 
+                    // TODO: add region change GET via query params. stops camera capture, waits half second adjusts settings, restarts capture
+                    // Expects: /region/123,123,123,123 ... no spaces
+                    } else if (strncmp(request, "GET /region/", 12) == 0) {
+                        // Parse region from URL path
+                        // start at 12
+                        char *start = request + 12;
+                        char *c = strtok(start, ",");
+                        int i = 0;
+                        while (c != NULL) {
+                            if (i > 3) {
+                                break;
+                            }
+                            int a = atoi(c);
+                            settings->region[i] = a;
+                            i++;
+                            c = strtok(NULL, ",");
+                        }
+                        pthread_mutex_lock(&restart_mutex);
+                        restart = 1;
+                        pthread_mutex_unlock(&restart_mutex);
+                        response1_length = snprintf(response1, 1024, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
+                        ret = sendSocket(http_fds[i].fd, response1, response1_length);
+                    
+                    } else if (strncmp(request, "GET /threshold/", 15) == 0) {
+                        // Parse region from URL path
+                        // start at 12
+                        char *start = request + 15;
+                        char *c = strtok(start, ",");
+                        settings->pixel_delta_threshold = atoi(c);
+                        
+                        pthread_mutex_lock(&restart_mutex);
+                        restart = 1;
+                        pthread_mutex_unlock(&restart_mutex);
+                        response1_length = snprintf(response1, 1024, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
+                        ret = sendSocket(http_fds[i].fd, response1, response1_length);
+
+                    } else if (strncmp(request, "GET /restart HTTP", 17) == 0) {
+                        pthread_mutex_lock(&restart_mutex);
+                        restart = 1;
+                        pthread_mutex_unlock(&restart_mutex);
+                        response1_length = snprintf(response1, 1024, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
+                        ret = sendSocket(http_fds[i].fd, response1, response1_length);
 
                     } else {
                         // request for something we don't handle
@@ -2343,7 +2429,7 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
 
     // Frame annotations
     MMAL_STATUS_T status;
-    struct timespec sleep;
+    struct timespec sleep_timespec;
     time_t rawtime;
     struct tm timeinfo;
     MMAL_PARAMETER_CAMERA_ANNOTATE_V4_T annotate;
@@ -2366,7 +2452,7 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
     annotate.x_offset = 0;
     annotate.y_offset = 0;
 
-    sleep.tv_sec = 0;
+    sleep_timespec.tv_sec = 0;
     // TODO: sleep until just before next seconds begins
     // sleep up to start of next second
     /*
@@ -2376,7 +2462,7 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
     sleep.tv_sec = 0;
     sleep.tv_nsec = (microsecondsRemaining * 1000);
     */
-    sleep.tv_nsec = 100 * 1000000;
+    sleep_timespec.tv_nsec = 100 * 1000000;
 
 
     pthread_mutex_lock(&running_mutex);
@@ -2390,10 +2476,30 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
         clock_gettime(CLOCK_REALTIME, &delta);
 
         if (previousSeconds == delta.tv_sec) {
-            nanosleep(&sleep, NULL);
+            nanosleep(&sleep_timespec, NULL);
             continue;
         }
         previousSeconds = delta.tv_sec;
+
+        pthread_mutex_lock(&restart_mutex);
+        if (restart == 1) {
+            int status = mmal_port_parameter_set_boolean(handles->camera->output[CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 0);
+            if (status != MMAL_SUCCESS) {
+                logError("Failed to stop camera", __func__);
+            }
+
+            // Re-copy settings values
+            reconfigureRegion(settings);
+            pixel_delta_threshold = settings->pixel_delta_threshold;
+
+            sleep(1);
+            status = mmal_port_parameter_set_boolean(handles->camera->output[CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 1);
+            if (status != MMAL_SUCCESS) {
+                logError("Failed to restart camera", __func__);
+            }
+            restart = false;
+        }
+        pthread_mutex_unlock(&restart_mutex);
 
         pthread_mutex_lock(&statsMutex);
         fps = stats.fps;
@@ -2493,6 +2599,7 @@ int main(int argc, const char **argv) {
     pthread_mutex_init(&stream_connections_mutex, NULL);
     pthread_mutex_init(&motion_connections_mutex, NULL);
     pthread_mutex_init(&still_connections_mutex, NULL);
+    pthread_mutex_init(&restart_mutex, NULL);
 
     pthread_mutex_init(&mjpeg_concurrent_mutex, NULL);
 

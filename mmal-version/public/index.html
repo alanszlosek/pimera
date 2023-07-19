@@ -46,8 +46,15 @@ div img {
 
 <div id="highlight"></div>
 
+<label for="threshold">Threshold</label><br />
+<input id="threshold" type="number" min="1000" max="300000" step="1000" value="4000" />
+<div id="changed"></div>
+
 <script>
-document.addEventListener("readystatechange", function() {
+document.addEventListener("readystatechange", function(event) {
+    if (document.readyState != 'complete') {
+        return;
+    }
     let width = 1640;
     let height = 922;
 
@@ -93,8 +100,11 @@ document.addEventListener("readystatechange", function() {
         let region = [x_start, y_start, x_end, y_end];
         let pixels = (x_end - x_start) * (y_end - y_start);
 
-        document.getElementById("region").innerText = region.join(',');
-        document.getElementById("pixels").innerText = 'Pixels: ' + pixels;
+        let regionList = region.join(',');
+        fetch('/region/' + regionList);
+
+        document.getElementById("region").innerText = regionList;
+        document.getElementById("pixels").innerText = 'Pixels in region: ' + pixels;
 
 
         /*
@@ -118,7 +128,28 @@ document.addEventListener("readystatechange", function() {
         e.preventDefault();
     });
 
-    document.getElementById("streamJpeg").src = "/stream.mjpeg?ts=" + Date.now() ;
+    document.getElementById("streamJpeg").src = "/stream.mjpeg?ts=" + Date.now();
+
+    // TODO: throttle this
+    document.getElementById('threshold').addEventListener('change', function(el) {
+        fetch('/threshold/' + el.target.value);
+    });
+
+    // Poll status
+    let changed = document.getElementById('changed');
+    setInterval(
+        function() {
+            fetch('/status.json')
+                .then(function(response) {
+                    return response.json();
+                })
+                .then(function(data) {
+                    document.body.style.backgroundColor = data.motion > 0 ? 'yellow' : 'white';
+                    changed.innerHTML = 'Detection pixel delta: ' + data.delta;
+                });
+        },
+        1000
+    );
 
 });
 </script>
