@@ -62,7 +62,7 @@ pthread_mutex_t restart_mutex;
 int restart = 0;
 
 // Used by yuvCallback()
-unsigned int pixel_delta_threshold = 280000;
+unsigned int pixel_delta_threshold = 4000;
 
 // TODO: change this to fixed list of MMAL buffers
 uint8_t* h264_buffer;
@@ -149,9 +149,10 @@ void reconfigureRegion(SETTINGS* settings) {
 
     motionDetection.region.offset = (y_start * stride) + x_start;
     motionDetection.region.num_rows = y_end - y_start;
-    motionDetection.region.row_batch_size = motionDetection.region.num_rows / 2;
+    motionDetection.region.batches = 2;
+    motionDetection.region.row_batch_size = motionDetection.region.num_rows / motionDetection.region.batches;
     motionDetection.region.row_length = x_end - x_start;
-    motionDetection.region.stride = stride;
+    motionDetection.region.stride = settings->mjpeg.vcosWidth;
 }
 void initDetection(SETTINGS* settings) {
     motionDetection.detection_sleep = settings->h264.fps / settings->motion_check_frequency;
@@ -202,10 +203,10 @@ void setDefaultSettings(SETTINGS* settings) {
     settings->region[2] = 100;
     settings->region[3] = 100;
     settings->changed_pixels_threshold = 500;
-    settings->pixel_delta_threshold = 280000;
+    settings->pixel_delta_threshold = 4000;
     pixel_delta_threshold = settings->pixel_delta_threshold;
 
-    settings->vcosWidth = ALIGN_UP(settings->width, 16);
+    settings->vcosWidth = ALIGN_UP(settings->width, 32);
     settings->vcosHeight = ALIGN_UP(settings->height, 16);
 
     settings->h264.width = settings->width;
@@ -217,7 +218,7 @@ void setDefaultSettings(SETTINGS* settings) {
 
     settings->mjpeg.width = settings->width / settings->streamDenominator;
     settings->mjpeg.height = settings->height / settings->streamDenominator;
-    settings->mjpeg.vcosWidth = ALIGN_UP(settings->mjpeg.width, 16);
+    settings->mjpeg.vcosWidth = ALIGN_UP(settings->mjpeg.width, 32);
     settings->mjpeg.vcosHeight = ALIGN_UP(settings->mjpeg.height, 16);
     settings->mjpeg.y_length = settings->mjpeg.vcosWidth * settings->mjpeg.vcosHeight * 1.5;
 
@@ -335,7 +336,7 @@ void readSettings(SETTINGS* settings) {
         value = ini_property_value(ini, INI_GLOBAL_SECTION, i);
         settings->height = atoi(value);
     }
-    settings->vcosWidth = ALIGN_UP(settings->width, 16);
+    settings->vcosWidth = ALIGN_UP(settings->width, 32);
     settings->vcosHeight = ALIGN_UP(settings->height, 16);
     settings->h264.width = settings->width;
     settings->h264.height = settings->height;
@@ -344,9 +345,11 @@ void readSettings(SETTINGS* settings) {
 
     settings->mjpeg.width = settings->width / settings->streamDenominator;
     settings->mjpeg.height = settings->height / settings->streamDenominator;
-    settings->mjpeg.vcosWidth = ALIGN_UP(settings->mjpeg.width, 16);
+    settings->mjpeg.vcosWidth = ALIGN_UP(settings->mjpeg.width, 32);
     settings->mjpeg.vcosHeight = ALIGN_UP(settings->mjpeg.height, 16);
     settings->mjpeg.y_length = settings->mjpeg.vcosWidth * settings->mjpeg.vcosHeight * 1.5;
+
+    printf("MJPEG VCOS %d x %d\n", settings->mjpeg.vcosWidth, settings->mjpeg.vcosHeight);
 
     i = ini_find_property(ini, INI_GLOBAL_SECTION, "fps", 3);
     if (i != INI_NOT_FOUND) {
@@ -625,7 +628,7 @@ static MMAL_STATUS_T create_camera(MMAL_COMPONENT_T **camera_handle, SETTINGS *s
     */
 
     format = video_port->format;
-    format->encoding_variant = MMAL_ENCODING_I420;
+    //format->encoding_variant = MMAL_ENCODING_I420;
 
     fprintf(stdout, "[INFO] vcos w: %d h: %d\n", settings->vcosWidth, settings->vcosHeight);
 
@@ -903,7 +906,7 @@ static MMAL_STATUS_T create_resizer(MMAL_COMPONENT_T **handle, MMAL_CONNECTION_T
         return status;
     }
 
-    // Tell resizer which format it'll be receiving from the camera video output
+    // Tell resizer which format it'll be receiving
     mmal_format_copy(resizer->input[0]->format, output_port->format);
 
     status = mmal_port_format_commit(resizer->input[0]);
@@ -915,6 +918,7 @@ static MMAL_STATUS_T create_resizer(MMAL_COMPONENT_T **handle, MMAL_CONNECTION_T
 
     // configure output format
     // need botfh of these to move from opaque format
+    mmal_format_copy(resizer->output[0]->format, resizer->input[0]->format);
     format = resizer->output[0]->format;
     format->encoding = MMAL_ENCODING_I420;
     format->encoding_variant = MMAL_ENCODING_I420;
@@ -1790,7 +1794,7 @@ static void destroyH264Encoder(HANDLES *handles, SETTINGS *settings) {
 
 // BEGIN YUV FUNCTIONS
 // for first iteration, this just copies into previous buffer
-uint8_t which_rows = 0;
+int8_t detection_row_batch = -1;
 // TODO: update this according to settings, and when settings change (during camera pause/resume)
 
 // this is declared higher so other functions can use it
@@ -1824,8 +1828,20 @@ void yuvCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         uint8_t* p = motionDetection.previousFrame;
         uint8_t* c = motionDetection.yuvBuffer;
 
+	// Save to file
+    /*
+	char filename[255];
+	FILE* f;
+	snprintf(filename, 200, "/home/pi/yuv/%d.yuv", frame_counter);
+	printf("Saving YUV to %s\n", filename);
+	f = fopen(filename, "w+");
+	fwrite(c, 1, settings->mjpeg.y_length, f);
+	fclose(f);
+    */
 
-        which_rows = 2;
+
+
+        detection_row_batch = 1;
         pixel_delta_temp = 0;
         /*
         for regions we really just need:
@@ -1869,7 +1885,7 @@ void yuvCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             memcpy(motionDetection.previousFrame, buffer->data, settings->mjpeg.y_length);
 
             // skip second half
-            which_rows = 1;
+            detection_row_batch = 0;
         } else {
             pthread_mutex_lock(&motionDetectionMutex);
             // TODO: if not reach threshold, set detection_at to frame_counter+1
@@ -1881,15 +1897,25 @@ void yuvCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         }
 
 
-    // TODO: verify that which_rows and the loop below is correct
-    } else if (which_rows > 0) {
-        which_rows = 1;
+    // TODO: verify that detection_row_batch and the loop below is correct
+    } else if (detection_row_batch > 0) {
+        detection_row_batch++;
         begin = clock();
         
         uint8_t* p = motionDetection.previousFrame;
         uint8_t* c = motionDetection.yuvBuffer;
-        for (int row = motionDetection.region.row_batch_size * which_rows; row < motionDetection.region.num_rows; row++) {
-            unsigned int offset = motionDetection.region.offset + (motionDetection.region.stride * row);
+        // TODO: i'm so tired, hard to think about this
+        for (
+            int row = 0,
+            row_number = motionDetection.region.row_batch_size * detection_row_batch;
+
+            row < motionDetection.region.row_batch_size &&
+            row_number < motionDetection.region.num_rows;
+            
+            row++,
+            row_number++
+        ) {
+            unsigned int offset = motionDetection.region.offset + (motionDetection.region.stride * row_number);
             uint8_t *c_start = c + offset;
             uint8_t *p_start = p + offset;
             uint8_t *c_end = c_start + motionDetection.region.row_length;
@@ -1900,6 +1926,10 @@ void yuvCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
                     pixel_delta_temp += delta;
                 }
             }
+        }
+        if (detection_row_batch == motionDetection.region.batches) {
+            // no more batches
+            detection_row_batch = 0;
         }
         end = clock();
 
@@ -1929,7 +1959,7 @@ void yuvCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             pthread_mutex_unlock(&motionDetectionMutex);
         }
 
-    } else if (which_rows == 0) {
+    } else if (detection_row_batch == -1) {
         mmal_buffer_header_mem_lock(buffer);
         // First run, copy into previous
         memcpy(motionDetection.previousFrame, buffer->data, settings->mjpeg.y_length );
@@ -1937,7 +1967,7 @@ void yuvCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         mmal_buffer_header_release(buffer);
         send_buffers_to_port(port, userdata->handles->yuvPool->queue);
         // next time will compare rows
-        which_rows = 1;
+        detection_row_batch = 1;
         return;
     }
 

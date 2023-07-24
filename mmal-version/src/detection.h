@@ -18,6 +18,7 @@ typedef struct {
         unsigned int offset;
         unsigned int row_length;
         unsigned int stride;
+        unsigned int batches;
         unsigned int row_batch_size;
         unsigned int num_rows;
     } region;
