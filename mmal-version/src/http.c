@@ -103,8 +103,8 @@ void *httpServer(void *v) {
     int request_length = 8192;
     char* response_header = "HTTP/1.1 200 OK\r\nConnection: Keep-Alive\r\nCache-control: no-store\r\nContent-Type: multipart/x-mixed-replace; boundary=HATCHA\r\n\r\n";
     int response_header_length = strlen(response_header);
-    int response2_max = 4096;
-    char response1[1024], response2[4097]; // for index.html
+    int response2_max = 8192;
+    char response1[1024], response2[8193]; // for index.html
     int response1_length, response2_length;
     int i;
     int yes = 1;

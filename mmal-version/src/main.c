@@ -145,14 +145,15 @@ void reconfigureRegion(SETTINGS* settings) {
     x_end = settings->region[2];
     y_end = settings->region[3];
     printf("New detection region: %d, %d, %d, %d\n", x_start, y_start, x_end, y_end);
-    unsigned int stride = settings->mjpeg.width;
+    unsigned int stride = settings->mjpeg.vcosWidth;
 
     motionDetection.region.offset = (y_start * stride) + x_start;
     motionDetection.region.num_rows = y_end - y_start;
-    motionDetection.region.batches = 2;
+    // Split detection into batches so we finish just before the next detection frame
+    motionDetection.region.batches = motionDetection.detection_sleep - 1;
     motionDetection.region.row_batch_size = motionDetection.region.num_rows / motionDetection.region.batches;
     motionDetection.region.row_length = x_end - x_start;
-    motionDetection.region.stride = settings->mjpeg.vcosWidth;
+    motionDetection.region.stride = stride;
 }
 void initDetection(SETTINGS* settings) {
     motionDetection.detection_sleep = settings->h264.fps / settings->motion_check_frequency;
@@ -633,8 +634,8 @@ static MMAL_STATUS_T create_camera(MMAL_COMPONENT_T **camera_handle, SETTINGS *s
     fprintf(stdout, "[INFO] vcos w: %d h: %d\n", settings->vcosWidth, settings->vcosHeight);
 
     format->encoding = MMAL_ENCODING_OPAQUE;
-    format->es->video.width = settings->width; // TODO: do we need vcosWidth here?
-    format->es->video.height = settings->height;
+    format->es->video.width = settings->vcosWidth; // TODO: do we need vcosWidth here?
+    format->es->video.height = settings->vcosHeight;
     format->es->video.crop.x = 0;
     format->es->video.crop.y = 0;
     format->es->video.crop.width = settings->width;
@@ -679,122 +680,6 @@ static MMAL_STATUS_T create_camera(MMAL_COMPONENT_T **camera_handle, SETTINGS *s
 
 // END CAMERA FUNCTIONS
 
-
-
-// SPLITTER FUNCTIONS
-static MMAL_STATUS_T createSplitter(HANDLES *handles, SETTINGS* settings) {
-    MMAL_COMPONENT_T *splitter = 0;
-    MMAL_PORT_T *splitter_output = NULL;
-    MMAL_ES_FORMAT_T *format;
-    MMAL_STATUS_T status;
-    MMAL_POOL_T *pool;
-    int i;
-
-    status = mmal_component_create(MMAL_COMPONENT_DEFAULT_VIDEO_SPLITTER, &splitter);
-    if (status != MMAL_SUCCESS) {
-        logError("mmal_component_create failed for splitter", __func__);
-        return status;
-    }
-
-    mmal_format_copy(splitter->input[0]->format, handles->camera->output[CAMERA_VIDEO_PORT]->format);
-
-    // TODO: not sure this is right
-    /*
-    if (splitter->input[0]->buffer_num < DESIRED_OUTPUT_BUFFERS) {
-        splitter->input[0]->buffer_num = DESIRED_OUTPUT_BUFFERS;
-    }
-    */
-
-
-    status = mmal_port_format_commit(splitter->input[0]);
-    if (status != MMAL_SUCCESS) {
-        logError("mmal_port_format_commit failed on splitter input", __func__);
-        destroyComponent(settings, splitter, "splitter");
-        return status;
-    }
-
-    // KINDA DOUBT I NEED TO BE CONCERNED WITH SPLITTER BUFFERS
-    //splitter->input[0]->buffer_num < splitter->input[0]->buffer_num_recommended;
-
-    // Pass through the same input format to outputs
-    for (i = 0; i < splitter->output_num; i++) {
-        mmal_format_copy(splitter->output[i]->format, splitter->input[0]->format);
-
-        if (i == SPLITTER_YUV_PORT) {
-            // need both of these to move from opaque format
-            splitter->output[i]->format->encoding = MMAL_ENCODING_I420;
-            splitter->output[i]->format->encoding_variant = MMAL_ENCODING_I420;
-
-            splitter->output[i]->buffer_size = settings->vcosWidth * settings->vcosHeight * 1.5;
-            //splitter->output[i]->buffer_size = splitter->output[i]->buffer_size_recommended;
-            splitter->output[i]->buffer_num = DESIRED_OUTPUT_BUFFERS;
-        }
-
-        status = mmal_port_format_commit(splitter->output[i]);
-        if (status != MMAL_SUCCESS) {
-            logError("mmal_port_format_commit failed on a splitter output", __func__);
-            destroyComponent(settings, splitter, "splitter");
-            return status;
-        }
-        /*
-        if (i == SPLITTER_YUV_PORT) {
-            fprintf(
-                stdout,
-                "bgr buf. num rec: %d size rec: %d\n",
-                splitter->output[i]->buffer_num_recommended,
-                splitter->output[i]->buffer_size_recommended
-            );
-            // docs say to adjust these after changes to port's format
-            // crossing fingers
-            // hope this incorporates vcos dims given stride
-            splitter->output[i]->buffer_size = settings->vcosWidth * settings->vcosHeight * 1.5;
-            //splitter->output[i]->buffer_size = splitter->output[i]->buffer_size_recommended;
-            splitter->output[i]->buffer_num = DESIRED_OUTPUT_BUFFERS;
-            //splitter->output[i]->buffer_num = splitter->output[i]->buffer_num_recommended;
-        }
-        */
-    }
-
-    status = mmal_component_enable(splitter);
-    if (status != MMAL_SUCCESS) {
-        logError("mmal_component_enable failed on splitter", __func__);
-        destroyComponent(settings, splitter, "splitter");
-        return status;
-    }
-
-    // create yuv pool
-    //settings.vcosWidth * settings.vcosHeight * 3;
-    int yuv_buffer_size = splitter->output[SPLITTER_YUV_PORT]->buffer_size;
-    int yuv_num_buffers = splitter->output[SPLITTER_YUV_PORT]->buffer_num;
-    fprintf(stdout, "Creating yuv buffer pool with %d bufs of size: %d\n", yuv_num_buffers, yuv_buffer_size);
-    handles->yuvPool = mmal_port_pool_create(splitter->output[SPLITTER_YUV_PORT], yuv_num_buffers, yuv_buffer_size);
-    if (!handles->yuvPool) {
-        logError("mmal_port_pool_create failed for yuv output", __func__);
-        // TODO: what error code for this?
-    } else {
-        if (settings->verbose) {
-            logInfo("Created yuv pool");
-        }
-    }
-
-    handles->splitter = splitter;
-    if (settings->verbose) {
-        logInfo("Splitter created");
-    }
-
-    return status;
-}
-
-static void destroySplitter(HANDLES *handles, SETTINGS *settings) {
-    if (handles->splitter) {
-        if (settings->verbose) {
-            logInfo("Destroying splitter");
-        }
-        mmal_component_destroy(handles->splitter);
-        handles->splitter = NULL;
-    }
-}
-// END OLD SPLITTER FUNCTIONS
 
 // BEGIN NEW SPLITTER FUNCTIONS
 static MMAL_STATUS_T create_splitter(MMAL_COMPONENT_T **splitter_handle, MMAL_CONNECTION_T **connection_handle, MMAL_PORT_T *output_port, int num_outputs) {
@@ -1134,7 +1019,7 @@ void mjpegCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     // TODO: get rid of this
     pthread_mutex_lock(&mjpeg_concurrent_mutex);
     if (mjpeg_concurrent > 0) {
-	    printf("mjpegCallback already in process\n");
+        printf("mjpegCallback already in process\n");
     }
     mjpeg_concurrent++;
     pthread_mutex_unlock(&mjpeg_concurrent_mutex);
@@ -1594,7 +1479,7 @@ void h264Callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
 
     pthread_mutex_lock(&h264_concurrent_mutex);
     if (h264_concurrent > 0) {
-	    printf("h264Callback already in process\n");
+        printf("h264Callback already in process\n");
     }
     h264_concurrent++;
     pthread_mutex_unlock(&h264_concurrent_mutex);
@@ -1828,15 +1713,15 @@ void yuvCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         uint8_t* p = motionDetection.previousFrame;
         uint8_t* c = motionDetection.yuvBuffer;
 
-	// Save to file
-    /*
-	char filename[255];
-	FILE* f;
-	snprintf(filename, 200, "/home/pi/yuv/%d.yuv", frame_counter);
-	printf("Saving YUV to %s\n", filename);
-	f = fopen(filename, "w+");
-	fwrite(c, 1, settings->mjpeg.y_length, f);
-	fclose(f);
+    // Save to file
+        /*
+    char filename[255];
+    FILE* f;
+    snprintf(filename, 200, "/home/pi/yuv/%d.yuv", frame_counter);
+    printf("Saving YUV to %s\n", filename);
+    f = fopen(filename, "w+");
+    fwrite(c, 1, settings->mjpeg.y_length, f);
+    fclose(f);
     */
 
 
