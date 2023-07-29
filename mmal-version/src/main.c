@@ -392,20 +392,12 @@ void h264BufferDebug(MMAL_BUFFER_HEADER_T* buffer) {
 bool saving = 0;
 char h264FileKickoff[128];
 uint32_t h264FileKickoffLength;
-int h264_concurrent = 0;
-pthread_mutex_t h264_concurrent_mutex;
 void h264Callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     CALLBACK_USERDATA *userdata;
     SETTINGS *settings;
     struct timespec ts;
     bool debug;
 
-    pthread_mutex_lock(&h264_concurrent_mutex);
-    if (h264_concurrent > 0) {
-        printf("h264Callback already in process\n");
-    }
-    h264_concurrent++;
-    pthread_mutex_unlock(&h264_concurrent_mutex);
 
     if (!port->userdata) {
         logError("Did not find userdata in h264 callback", __func__);
@@ -422,20 +414,12 @@ void h264Callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         logInfo("Found cmd in h264 buffer. Releasing");
         mmal_buffer_header_release(buffer);
         sendH264Buffers(port, userdata);
-
-        pthread_mutex_lock(&h264_concurrent_mutex);
-        h264_concurrent--;
-        pthread_mutex_unlock(&h264_concurrent_mutex);
         return;
     }
     // is this necessary during shutdown to prevent a bunch of callbacks with messed up data?
     if (!buffer->length) {
         mmal_buffer_header_release(buffer);
         sendH264Buffers(port, userdata);
-
-        pthread_mutex_lock(&h264_concurrent_mutex);
-        h264_concurrent--;
-        pthread_mutex_unlock(&h264_concurrent_mutex);
         return;
     }
     
@@ -460,10 +444,6 @@ void h264Callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         mmal_buffer_header_release(buffer);
 
         sendH264Buffers(port, userdata);
-
-        pthread_mutex_lock(&h264_concurrent_mutex);
-        h264_concurrent--;
-        pthread_mutex_unlock(&h264_concurrent_mutex);
         return;
     }
 
@@ -572,10 +552,6 @@ void h264Callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     }
 
     sendH264Buffers(port, userdata);
-
-    pthread_mutex_lock(&h264_concurrent_mutex);
-    h264_concurrent--;
-    pthread_mutex_unlock(&h264_concurrent_mutex);
 }
 
 // END H264 FUNCTIONS
@@ -798,7 +774,6 @@ int main(int argc, const char **argv) {
     h264CallbackUserdata.h264FileKickoffLength = 0;
 
 
-    // todo: is there another way we should init? pthread_once? something else?
     pthread_mutex_init(&httpConnectionsMutex, NULL);
     pthread_mutex_init(&running_mutex, NULL);
     pthread_mutex_init(&motionDetectionMutex, NULL);
@@ -819,8 +794,6 @@ int main(int argc, const char **argv) {
     handles.mjpeg_encoder_connection = NULL;
     handles.h264_encoder_pool = NULL;
     handles.mjpeg_encoder_pool = NULL;
-    //handles.settings = &settings;
-    //handles.h264CallbackUserdata = &h264CallbackUserdata;
 
     setDefaultSettings(&settings);
     readSettings(&settings);
@@ -840,12 +813,7 @@ int main(int argc, const char **argv) {
 
     bcm_host_init();
 
-
     signal(SIGINT, signalHandler);
-
-    //pid_t tid = syscall(SYS_gettid);
-    //fprintf(stdout, "Main thread id %d\n", tid);
-
 
     if ((status = create_camera(&handles.camera, &settings)) != MMAL_SUCCESS) {
         logError("create_camera failed", __func__);
@@ -923,7 +891,6 @@ int main(int argc, const char **argv) {
         handles.yuvPool->queue
     );
     detection_threshold(settings.pixel_delta_threshold);
-    
 
 
     handles.h264_encoder->output[0]->userdata = (struct MMAL_PORT_USERDATA_T *)&h264CallbackUserdata;
@@ -940,36 +907,23 @@ int main(int argc, const char **argv) {
 
 
     // NOW TURN ON THE CAMERA
-
-    // TODO: does this really enable capture? necessary?
     status = mmal_port_parameter_set_boolean(handles.camera->output[CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 1);
     if (status != MMAL_SUCCESS) {
         logError("Toggling MMAL_PARAMETER_CAPTURE to 1 failed", __func__);
         // TODO: unwind
     }
 
-
     // set up http server thread
-    // set up mjpeg writer thread
     pthread_create(&httpServerThreadId, NULL, httpServer, &settings);
-    //pthread_create(&motionDetectionThreadId, NULL, motionDetectionThread, (void*)&handles);
 
     // heartbeat loop
     heartbeat(&settings, &handles);
 
-
     logInfo("Waiting for threads");
-    logInfo("hi 1");
     // This bails out of the thread, so we can exit
     pthread_cancel(httpServerThreadId);
-    //pthread_cancel(motionDetectionThreadId);
     // But we want to gracefully exit the mjpeg thread, instead of bail
-    logInfo("hi 2");
     pthread_join(httpServerThreadId, &httpServerThreadStatus);
-    logInfo("hi 3");
-    //pthread_join(motionDetectionThreadId, &motionDetectionThreadStatus);
-
-    // TODO: flush buffers before we exit?
 
     if (motionDetection.fd) {
         close(motionDetection.fd);
@@ -980,45 +934,30 @@ int main(int argc, const char **argv) {
         logInfo("Shutting down");
     }
 
-    // TODO: the below logic is broken
-    // do i disable leaf ports first, then connections?
-
     status = mmal_port_parameter_set_boolean(handles.camera->output[CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 0);
     if (status != MMAL_SUCCESS) {
         logError("Toggling MMAL_PARAMETER_CAPTURE to 0 failed", __func__);
         // TODO: unwind
     }
 
-    
     // Disable all our ports that are not handled by connections
-    logInfo("hi 4");
-    //disablePort(&settings, cameraVideoPort, "camera");
-    //disablePort(&settings, splitterH264Port, "splitter h264");
-    //disablePort(&settings, splitterMjpegPort, "splitter mjpeg");
     disable_port(handles.resized_splitter->output[1], "splitter yuv");
-    // disabling this causes a segfault ...
     disable_port(handles.h264_encoder->output[0], "h264 encoder output");
     disable_port(handles.mjpeg_encoder->output[0], "mjpeg encoder output");
 
-    logInfo("hi 5");
     destroy_splitter(handles.resized_splitter, handles.resized_splitter_connection);
     destroy_resizer(handles.resizer, handles.resizer_connection);
     destroy_h264_encoder(handles.h264_encoder, handles.h264_encoder_connection, handles.h264_encoder_pool);
     destroy_splitter(handles.full_splitter, handles.full_splitter_connection);
     destroy_camera(handles.camera);
 
-
-
     // clean up the processing queues
     logInfo("Cleaning up processing queues");
 
     freeDetection();
-    //free(h264_buffer);
-
 
     if (settings.verbose) {
         logInfo("Shutdown complete");
     }
-
 
 }

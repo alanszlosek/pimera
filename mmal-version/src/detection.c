@@ -93,7 +93,7 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         mmal_buffer_header_mem_unlock(buffer);
         end = clock();
 
-        printf("DETECTION1. Pixel delta: %d threshold: %d Time: %f FPS: %d\n", pixel_delta_temp, yuv_threshold, (double)(end - begin) / CLOCKS_PER_SEC, fps_rate);
+        //printf("DETECTION1. Pixel delta: %d threshold: %d Time: %f FPS: %d\n", pixel_delta_temp, yuv_threshold, (double)(end - begin) / CLOCKS_PER_SEC, fps_rate);
 
         if (pixel_delta_temp > yuv_threshold) {
             pthread_mutex_lock(&motionDetectionMutex);
@@ -157,7 +157,7 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         }
         end = clock();
 
-        printf("DETECTION2. Pixel delta: %d threshold: %d Time: %f FPS: %d\n", pixel_delta_temp, yuv_threshold, (double)(end - begin) / CLOCKS_PER_SEC, fps_rate);
+        //printf("DETECTION2. Pixel delta: %d threshold: %d Time: %f FPS: %d\n", pixel_delta_temp, yuv_threshold, (double)(end - begin) / CLOCKS_PER_SEC, fps_rate);
 
         // TODO: refactor this to compare delta against non-mutex threshold
         if (pixel_delta_temp > yuv_threshold) {
