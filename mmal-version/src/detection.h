@@ -4,6 +4,14 @@
 #include <inttypes.h>
 #include <pthread.h>
 
+#include "interface/mmal/mmal.h"
+#include "interface/mmal/mmal_buffer.h"
+#include "interface/mmal/mmal_port.h"
+
+#include "settings.h"
+
+// TODO: just need fps and y_length locally
+
 typedef struct {
     int detection_sleep;
     int detection_at;
@@ -34,5 +42,9 @@ typedef struct {
 } MOTION_DETECTION_T;
 extern MOTION_DETECTION_T motionDetection;
 extern pthread_mutex_t motionDetectionMutex;
+
+void detection_config(unsigned int fps, unsigned int y_length, MMAL_QUEUE_T* queue);
+void detection_threshold(unsigned int threshold);
+void yuv_callback(MMAL_PORT_T*, MMAL_BUFFER_HEADER_T*);
 
 #endif
