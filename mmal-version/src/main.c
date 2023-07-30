@@ -143,9 +143,8 @@ void setDefaultSettings(SETTINGS* settings) {
     settings->region[1] = 0;
     settings->region[2] = 100;
     settings->region[3] = 100;
-    settings->changed_pixels_threshold = 500;
-    settings->pixel_delta_threshold = 900000;
-    detection_threshold(settings->pixel_delta_threshold);
+    settings->threshold = 900000;
+    detection_threshold(settings->threshold);
 
     settings->vcosWidth = ALIGN_UP(settings->width, 32);
     settings->vcosHeight = ALIGN_UP(settings->height, 16);
@@ -302,11 +301,6 @@ void readSettings(SETTINGS* settings) {
         value = ini_property_value(ini, INI_GLOBAL_SECTION, i);
         strncpy(settings->videoPath, value, sizeof(settings->videoPath));
     }
-    i = ini_find_property(ini, INI_GLOBAL_SECTION, "changedPixelsThreshold", 15);
-    if (i != INI_NOT_FOUND) {
-        value = ini_property_value(ini, INI_GLOBAL_SECTION, i);
-        settings->changed_pixels_threshold = atoi(value);
-    }
     // TODO: rename this with units
     i = ini_find_property(ini, INI_GLOBAL_SECTION, "motion_check_frequency", 20);
     if (i != INI_NOT_FOUND) {
@@ -318,9 +312,7 @@ void readSettings(SETTINGS* settings) {
     i = ini_find_property(ini, INI_GLOBAL_SECTION, "region", 6);
     if (i != INI_NOT_FOUND) {
         value = ini_property_value(ini, INI_GLOBAL_SECTION, i);
-
         strcpy(valueCopy, value);
-
         char *p = strtok(valueCopy, ",");
         int j = 0;
         while (p) {
@@ -331,11 +323,11 @@ void readSettings(SETTINGS* settings) {
         logInfo("Region: %d %d %d %d", settings->region[0], settings->region[1], settings->region[2], settings->region[3]);
     }
     // motion detection threshold
-    i = ini_find_property(ini, INI_GLOBAL_SECTION, "pixelDeltaThreshold", 19);
+    i = ini_find_property(ini, INI_GLOBAL_SECTION, "threshold", 9);
     if (i != INI_NOT_FOUND) {
         value = ini_property_value(ini, INI_GLOBAL_SECTION, i);
-        settings->pixel_delta_threshold = atoi(value);
-        detection_threshold(settings->pixel_delta_threshold);
+        settings->threshold = atoi(value);
+        detection_threshold(settings->threshold);
     }
 
     fprintf(stdout, "[INFO] SETTINGS. h264 %dx%d @ %d fps. mjpeg %dx%d. motion_check_frequency: %d\n", settings->h264.width, settings->h264.height, settings->h264.fps, settings->mjpeg.width, settings->mjpeg.height, settings->motion_check_frequency);
@@ -677,7 +669,7 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
 
             // Re-copy settings values
             reconfigureRegion(settings);
-            detection_threshold(settings->pixel_delta_threshold);
+            detection_threshold(settings->threshold);
 
             sleep(1);
             status = mmal_port_parameter_set_boolean(handles->camera->output[CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 1);
@@ -890,7 +882,7 @@ int main(int argc, const char **argv) {
         settings.mjpeg.y_length,
         handles.yuvPool->queue
     );
-    detection_threshold(settings.pixel_delta_threshold);
+    detection_threshold(settings.threshold);
 
 
     handles.h264_encoder->output[0]->userdata = (struct MMAL_PORT_USERDATA_T *)&h264CallbackUserdata;

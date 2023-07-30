@@ -80,6 +80,14 @@ document.addEventListener("readystatechange", function(event) {
     let hl = document.getElementById('highlight');
     let hlActive = false;
 
+    let refreshHighlight = function() {
+        hl.style.top = highlight.top + 'px';
+        hl.style.left = highlight.left + 'px';
+        hl.style.width = highlight.width + 'px';
+        hl.style.height = highlight.height + 'px';
+        hl.style.display = "block";
+    };
+
     let listeners = {
         'document': {
             'mousedown': function(e) {
@@ -104,12 +112,7 @@ document.addEventListener("readystatechange", function(event) {
                 // TODO: snap to bounds of image
 
                 updateHighlight();
-
-                hl.style.top = highlight.top + 'px';
-                hl.style.left = highlight.left + 'px';
-                hl.style.width = highlight.width + 'px';
-                hl.style.height = highlight.height + 'px';
-                hl.style.display = "block";
+                refreshHighlight();
             },
             'mouseup': function(e) {
                 // make sure we process if mouse is released within our highlight div
@@ -191,6 +194,7 @@ document.addEventListener("readystatechange", function(event) {
 
     // Poll status
     let changed = document.getElementById('changed');
+    let first = true;
     setInterval(
         function() {
             fetch('/status.json')
@@ -198,6 +202,17 @@ document.addEventListener("readystatechange", function(event) {
                     return response.json();
                 })
                 .then(function(data) {
+                    if (first) {
+                        let region = data.region.split(',').map(function(v) { return parseInt(v); });
+                        let rect = el.getBoundingClientRect();
+                        highlight.left = region[0] + rect.left;
+                        highlight.top = region[1] + rect.top;
+                        highlight.width = region[2] - region[0];
+                        highlight.height = region[3] - region[1];
+                        refreshHighlight();
+                    }
+                    first = false;
+
                     document.body.style.backgroundColor = data.motion > 0 ? 'yellow' : 'white';
                     changed.innerHTML = 'Detection pixel delta: ' + data.delta;
                 });

@@ -211,7 +211,20 @@ void *httpServer(void *v) {
                         int motion_count = motionDetection.motion_count;
                         int delta = motionDetection.pixel_delta;
                         pthread_mutex_unlock(&motionDetectionMutex);
-                        response2_length = snprintf(response2, response2_max, "{\"width\": \"%d\", \"height\":\"%d\", \"motion\": %d, \"delta\": %d}", settings->width, settings->height, motion_count, delta);
+                        response2_length = snprintf(
+                            response2,
+                            response2_max,
+                            "{\"width\": \"%d\", \"height\":\"%d\", \"motion\": %d, \"delta\": %d, \"threshold\": %d, \"region\": \"%d,%d,%d,%d\"}",
+                            settings->width,
+                            settings->height,
+                            motion_count,
+                            delta,
+                            settings->threshold,
+                            settings->region[0],
+                            settings->region[1],
+                            settings->region[2],
+                            settings->region[3]
+                        );
 
                         response1_length = snprintf(response1, 1024, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n", response2_length);
 
@@ -225,14 +238,14 @@ void *httpServer(void *v) {
                         // start at 12
                         char *start = request + 12;
                         char *c = strtok(start, ",");
-                        int i = 0;
+                        int j = 0;
                         while (c != NULL) {
-                            if (i > 3) {
+                            if (j > 3) {
                                 break;
                             }
                             int a = atoi(c);
-                            settings->region[i] = a;
-                            i++;
+                            settings->region[j] = a;
+                            j++;
                             c = strtok(NULL, ",");
                         }
                         pthread_mutex_lock(&restart_mutex);

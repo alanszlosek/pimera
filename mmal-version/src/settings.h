@@ -48,8 +48,8 @@ struct SETTINGS_S {
 
     
     int motion_check_frequency; // default 3 per second
-    unsigned int changed_pixels_threshold;
     unsigned int pixel_delta_threshold;
+    unsigned int threshold;
     char objectDetectionEndpoint[128];
     int verbose;
     bool debug;
