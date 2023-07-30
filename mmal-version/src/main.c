@@ -143,7 +143,7 @@ void setDefaultSettings(SETTINGS* settings) {
     settings->region[1] = 0;
     settings->region[2] = 100;
     settings->region[3] = 100;
-    settings->threshold = 900000;
+    settings->threshold = 5000;
     detection_threshold(settings->threshold);
 
     settings->vcosWidth = ALIGN_UP(settings->width, 32);

@@ -17,7 +17,7 @@ unsigned int yuv_threshold = 900000;
 
 // for first iteration, this just copies into previous buffer
 int8_t detection_row_batch = -1;
-unsigned int pixel_delta_temp;
+unsigned int threshold_tally;
 unsigned int yuv_frame_counter = 0;
 
 time_t previous_time = 0;
@@ -66,7 +66,7 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         */
 
         detection_row_batch = 1;
-        pixel_delta_temp = 0;
+        threshold_tally = 0;
         /*
         for regions we really just need:
         start offset
@@ -86,20 +86,20 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             for (; c_start < c_end; c_start++, p_start++) {
                 uint8_t delta = abs(*c_start - *p_start);
                 if (delta > 50) {
-                    pixel_delta_temp += delta;
+                    threshold_tally++;
                 }
             }
         }
         mmal_buffer_header_mem_unlock(buffer);
         end = clock();
 
-        //printf("DETECTION1. Pixel delta: %d threshold: %d Time: %f FPS: %d\n", pixel_delta_temp, yuv_threshold, (double)(end - begin) / CLOCKS_PER_SEC, fps_rate);
+        //printf("DETECTION1. Pixel delta: %d threshold: %d Time: %f FPS: %d\n", threshold_tally, yuv_threshold, (double)(end - begin) / CLOCKS_PER_SEC, fps_rate);
 
-        if (pixel_delta_temp > yuv_threshold) {
+        if (threshold_tally > yuv_threshold) {
             pthread_mutex_lock(&motionDetectionMutex);
             // TODO: can still lock around here, but don't need lock above
             motionDetection.motion_count++;
-            motionDetection.pixel_delta = pixel_delta_temp;
+            motionDetection.pixel_delta = threshold_tally;
             // if motion is detected, check again in 2 seconds
             motionDetection.detection_at = yuv_frame_counter + (settings_fps * 2);
             pthread_mutex_unlock(&motionDetectionMutex);
@@ -115,7 +115,7 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             // TODO: if not reach threshold, set detection_at to yuv_frame_counter+1
             // so we process rest of lines in next callback
             motionDetection.motion_count = 0;
-            motionDetection.pixel_delta = pixel_delta_temp;
+            motionDetection.pixel_delta = threshold_tally;
             motionDetection.detection_at = yuv_frame_counter + motionDetection.detection_sleep;
             pthread_mutex_unlock(&motionDetectionMutex);
         }
@@ -147,7 +147,7 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             for (; c_start < c_end; c_start++, p_start++) {
                 uint8_t delta = abs(*c_start - *p_start);
                 if (delta > 50) {
-                    pixel_delta_temp += delta;
+                    threshold_tally++;
                 }
             }
         }
@@ -157,14 +157,14 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         }
         end = clock();
 
-        //printf("DETECTION2. Pixel delta: %d threshold: %d Time: %f FPS: %d\n", pixel_delta_temp, yuv_threshold, (double)(end - begin) / CLOCKS_PER_SEC, fps_rate);
+        //printf("DETECTION2. Pixel delta: %d threshold: %d Time: %f FPS: %d\n", threshold_tally, yuv_threshold, (double)(end - begin) / CLOCKS_PER_SEC, fps_rate);
 
         // TODO: refactor this to compare delta against non-mutex threshold
-        if (pixel_delta_temp > yuv_threshold) {
+        if (threshold_tally > yuv_threshold) {
             pthread_mutex_lock(&motionDetectionMutex);
             // TODO: can still lock around here, but don't need lock above
             motionDetection.motion_count++;
-            motionDetection.pixel_delta = pixel_delta_temp;
+            motionDetection.pixel_delta = threshold_tally;
             // if motion is detected, check again in 2 seconds
             motionDetection.detection_at = yuv_frame_counter - 1 + (settings_fps * 2);
             pthread_mutex_unlock(&motionDetectionMutex);
@@ -177,7 +177,7 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             // TODO: if not reach threshold, set detection_at to yuv_frame_counter+1
             // so we process rest of lines in next callback
             motionDetection.motion_count = 0;
-            motionDetection.pixel_delta = pixel_delta_temp;
+            motionDetection.pixel_delta = threshold_tally;
             // this should already be set correctly
             //motionDetection.detection_at = yuv_frame_counter + motionDetection.detection_sleep;
             pthread_mutex_unlock(&motionDetectionMutex);

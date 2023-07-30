@@ -259,7 +259,7 @@ void *httpServer(void *v) {
                         // start at 12
                         char *start = request + 15;
                         char *c = strtok(start, ",");
-                        settings->pixel_delta_threshold = atoi(c);
+                        settings->threshold = atoi(c);
                         
                         pthread_mutex_lock(&restart_mutex);
                         restart = 1;

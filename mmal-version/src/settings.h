@@ -46,9 +46,7 @@ struct SETTINGS_S {
 
     unsigned int region[4];
 
-    
     int motion_check_frequency; // default 3 per second
-    unsigned int pixel_delta_threshold;
     unsigned int threshold;
     char objectDetectionEndpoint[128];
     int verbose;

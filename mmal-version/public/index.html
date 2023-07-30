@@ -50,7 +50,7 @@ div img {
 <div id="highlight"></div>
 
 <label for="threshold">Threshold: </label>
-<input id="threshold" type="number" min="1000" max="300000" step="1000" value="4000" />
+<input id="threshold" type="number" min="10" max="900000" step="10" value="400" />
 <button id="saveThreshold">Save</button>
 <div id="changed"></div>
 
@@ -62,7 +62,15 @@ document.addEventListener("readystatechange", function(event) {
     let width = 1640;
     let height = 922;
 
-    let el = document.getElementById("streamJpeg");
+    let handles = {
+        threshold: document.getElementById('threshold'),
+        streamJpeg: document.getElementById("streamJpeg"),
+        highlight: document.getElementById('highlight'),
+        region: document.getElementById("region")
+
+    }
+
+    let el = handles.streamJpeg;
     let start;
     let x1, x2, y1, y2;
     let highlight = {
@@ -77,7 +85,7 @@ document.addEventListener("readystatechange", function(event) {
         highlight.top = Math.min(y1, y2);
         highlight.height = Math.max(y1, y2) - highlight.top;
     };
-    let hl = document.getElementById('highlight');
+    let hl = handles.highlight;
     let hlActive = false;
 
     let refreshHighlight = function() {
@@ -133,7 +141,7 @@ document.addEventListener("readystatechange", function(event) {
                 let regionList = region.join(',');
                 fetch('/region/' + regionList);
 
-                document.getElementById("region").innerText = regionList;
+                handles.region.innerText = regionList;
                 //document.getElementById("pixels").innerText = 'Pixels in region: ' + pixels;
 
 
@@ -158,7 +166,7 @@ document.addEventListener("readystatechange", function(event) {
         },
         'saveThreshold': {
             'click': function(e) {
-                fetch('/threshold/' + document.getElementById('threshold').value);
+                fetch('/threshold/' + handles.threshold.value);
             }
         }
     };
@@ -190,7 +198,7 @@ document.addEventListener("readystatechange", function(event) {
     });
     */
 
-    document.getElementById("streamJpeg").src = "/stream.mjpeg?ts=" + Date.now();
+    handles.streamJpeg.src = "/stream.mjpeg?ts=" + Date.now();
 
     // Poll status
     let changed = document.getElementById('changed');
@@ -210,11 +218,13 @@ document.addEventListener("readystatechange", function(event) {
                         highlight.width = region[2] - region[0];
                         highlight.height = region[3] - region[1];
                         refreshHighlight();
+                        handles.threshold.value = data.threshold;
                     }
                     first = false;
 
+
                     document.body.style.backgroundColor = data.motion > 0 ? 'yellow' : 'white';
-                    changed.innerHTML = 'Detection pixel delta: ' + data.delta;
+                    changed.innerHTML = 'Current value: ' + data.delta;
                 });
         },
         1000
