@@ -849,8 +849,12 @@ int main(int argc, const char **argv) {
     }
     mjpeg_config(handles.mjpeg_encoder_pool->queue);
 
-
+    #ifdef __ARM_NEON
+    logInfo("Using YUV Neon SIMD callback");
+    status = mmal_port_enable(handles.resized_splitter->output[1], yuv_callback_neon);
+    #else
     status = mmal_port_enable(handles.resized_splitter->output[1], yuv_callback);
+    #endif
     if (status != MMAL_SUCCESS) {
         logError("mmal_port_enable failed for mjpeg encoder output", __func__);
         destroy_mjpeg_encoder(handles.mjpeg_encoder, handles.mjpeg_encoder_connection, handles.mjpeg_encoder_pool);

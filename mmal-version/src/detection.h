@@ -46,5 +46,8 @@ extern pthread_mutex_t motionDetectionMutex;
 void detection_config(unsigned int fps, unsigned int y_length, MMAL_QUEUE_T* queue);
 void detection_threshold(unsigned int threshold);
 void yuv_callback(MMAL_PORT_T*, MMAL_BUFFER_HEADER_T*);
+#ifdef __ARM_NEON
+void yuv_callback_neon(MMAL_PORT_T*, MMAL_BUFFER_HEADER_T*);
+#endif
 
 #endif
