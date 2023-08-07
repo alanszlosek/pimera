@@ -2,9 +2,9 @@
 
 PiMera hopes to be an end-to-end security/critter camera application, with a web UI for browsing recordings.
 
-The camera application runs on Raspberry Pi computers that use the Rasperry Pi camera modules. It saves H264 video whenever motion is detected within the camera frame. I'm striving for 1640x922 at 30fps (see note at end of this section), even on a Pi Zero W.
+The camera application (`mmal-version` folder) runs on Raspberry Pi computers that use the Rasperry Pi camera modules. It saves H264 video whenever motion is detected within the camera frame. I'm striving for 1640x922 at 30fps (see note at end of this section), even on a Pi Zero W.
 
-The processing scripts and video browsing UI use Python, MySQL, and JavaScript.
+The processing scripts and video browsing UI use Python, MySQL, and JavaScript. These run on a dedicated server.
 
 ## Repository layout
 
@@ -61,10 +61,10 @@ For now, I'm focused on making it performant on the Pi Zero W because it's small
 
 I'm developing and testing with:
 
-* Raspberry Pi Zero W
+* Raspberry Pi Zero W and a 3B+
 * Pi Camera module v2
 * 32bit PiOS
-* Clang
+* GCC, because Clang doesn't ARM Neon SIMD intrinsics
 
 # Installation
 
@@ -73,7 +73,7 @@ I'm developing and testing with:
 * Raspberry Pi Zero W, 3B+, or 4
 * Pi Camera module
 * 32bit Raspberry Pi OS Lite. No desktop needed, since want to preserve all CPU and RAM for pimera to keep things performant
-* apt install clang
+* apt install gcc
 
 ## Setup
 
@@ -83,7 +83,11 @@ Note the IP address of your Pi when it connects to your network.
 
 ## Building
 
-* In `mmal-version/src/`, run `make`
+* Change to `mmal-version/src/`
+* Run the appropriate make target for your RaspberryPi board
+  * `make zero` for the Pi Zero W
+  * `make three` for the Pi 3B+
+  * `make four` for the Pi 4
 
 ## Running
 
