@@ -80,13 +80,75 @@ typedef struct {
 
 void reconfigureRegion(SETTINGS* settings) {
     unsigned int x_start, x_end, y_start, y_end;
+    unsigned int stride = settings->mjpeg.vcosWidth;
+    unsigned int rows;
+    unsigned int row_length;
     x_start = settings->region[0];
     y_start = settings->region[1];
     x_end = settings->region[2];
     y_end = settings->region[3];
-    printf("New detection region: %d, %d, %d, %d\n", x_start, y_start, x_end, y_end);
-    unsigned int stride = settings->mjpeg.vcosWidth;
+    rows = y_end - y_start;
+    row_length = x_end - x_start;
 
+    printf("New detection region: %d, %d, %d, %d\n", x_start, y_start, x_end, y_end);
+
+    if (motionDetection.processing.pointers) {
+        free(motionDetection.processing.pointers);
+        motionDetection.processing.pointers = NULL;
+    }
+    // TODO: chnage to no more -1
+    motionDetection.processing.batches = motionDetection.detection_sleep - 1;
+
+    motionDetection.processing.pointers = (uint8_t**) malloc(
+        // start c, end c, start p
+        (sizeof(uint8_t*) * rows * 3)
+        +
+        // NULL separators between each batch of pointers
+        (sizeof(uint8_t*) * motionDetection.processing.batches * 3)
+        +
+        // NULL terminators
+        (sizeof(uint8_t*) * 9)
+    );
+
+    unsigned int rows_per_batch = rows / motionDetection.processing.batches;
+    unsigned int offset = (y_start * stride) + x_start;
+    unsigned int i = 0;
+    unsigned int j;
+
+    for (
+        unsigned int y = y_start,
+        row = 0;
+        
+        y < y_end;
+        
+        y++,
+        row++
+    ) {
+        unsigned int row_offset = offset + (stride * row);
+        j = i;
+        // pointer to start of row in current
+        motionDetection.processing.pointers[i++] = 
+            motionDetection.yuvBuffer + row_offset;
+
+        // pointer to end of that row in current
+        motionDetection.processing.pointers[i++] = motionDetection.processing.pointers[j] + row_length;
+
+        // pointer to start of corresponding row in previous
+        motionDetection.processing.pointers[i++] = 
+            motionDetection.previousFrame + row_offset;
+        // TODO: verify this is right
+        if ((row+1) % rows_per_batch == 0) {
+            motionDetection.processing.pointers[i++] = NULL;
+            motionDetection.processing.pointers[i++] = NULL;
+            motionDetection.processing.pointers[i++] = NULL;
+        }
+    }
+    motionDetection.processing.pointers[i++] = NULL;
+    motionDetection.processing.pointers[i++] = NULL;
+    motionDetection.processing.pointers[i++] = NULL;
+
+    // OLD
+    /*
     motionDetection.region.offset = (y_start * stride) + x_start;
     motionDetection.region.num_rows = y_end - y_start;
     // Split detection into batches so we finish just before the next detection frame
@@ -94,6 +156,7 @@ void reconfigureRegion(SETTINGS* settings) {
     motionDetection.region.row_batch_size = motionDetection.region.num_rows / motionDetection.region.batches;
     motionDetection.region.row_length = x_end - x_start;
     motionDetection.region.stride = stride;
+    */
 }
 void initDetection(SETTINGS* settings) {
     motionDetection.detection_sleep = settings->h264.fps / settings->motion_check_frequency;
@@ -118,6 +181,7 @@ void initDetection(SETTINGS* settings) {
     int end_x = start_x + width;
     */
 
+    motionDetection.processing.pointers = NULL;
     reconfigureRegion(settings);
 }
 
@@ -849,12 +913,8 @@ int main(int argc, const char **argv) {
     }
     mjpeg_config(handles.mjpeg_encoder_pool->queue);
 
-    #ifdef __ARM_NEON
-    logInfo("Using YUV Neon SIMD callback");
-    status = mmal_port_enable(handles.resized_splitter->output[1], yuv_callback_neon);
-    #else
     status = mmal_port_enable(handles.resized_splitter->output[1], yuv_callback);
-    #endif
+
     if (status != MMAL_SUCCESS) {
         logError("mmal_port_enable failed for mjpeg encoder output", __func__);
         destroy_mjpeg_encoder(handles.mjpeg_encoder, handles.mjpeg_encoder_connection, handles.mjpeg_encoder_pool);

@@ -22,6 +22,7 @@ typedef struct {
     uint8_t* yuvBuffer;
     unsigned int changed_pixels_threshold;
     unsigned int pixel_delta;
+    /*
     struct {
         unsigned int offset;
         unsigned int row_length;
@@ -30,6 +31,11 @@ typedef struct {
         unsigned int row_batch_size;
         unsigned int num_rows;
     } region;
+    */
+    struct {
+        unsigned int batches;
+        uint8_t** pointers;
+    } processing;
 
     char boundary[81];
     int boundaryLength;
@@ -46,8 +52,6 @@ extern pthread_mutex_t motionDetectionMutex;
 void detection_config(unsigned int fps, unsigned int y_length, MMAL_QUEUE_T* queue);
 void detection_threshold(unsigned int threshold);
 void yuv_callback(MMAL_PORT_T*, MMAL_BUFFER_HEADER_T*);
-#ifdef __ARM_NEON
-void yuv_callback_neon(MMAL_PORT_T*, MMAL_BUFFER_HEADER_T*);
-#endif
+
 
 #endif
