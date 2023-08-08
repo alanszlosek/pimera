@@ -14,12 +14,11 @@
 
 typedef struct {
     int detection_sleep;
-    int detection_at;
     int stream_sleep;
     uint8_t *previousFrame;
 
     // holds yuv data so we can spread detection across multiple yuvCallback() calls
-    uint8_t* yuvBuffer;
+    uint8_t* currentFrame;
     unsigned int changed_pixels_threshold;
     unsigned int pixel_delta;
     /*

@@ -6,6 +6,7 @@
 #include <arm_acle.h>
 #endif
 
+#include <stdbool.h>
 #include <stdio.h>
 
 #include "camera.h"
@@ -18,8 +19,11 @@ pthread_mutex_t motionDetectionMutex;
 unsigned int settings_buffer_length;
 unsigned int settings_fps;
 MMAL_QUEUE_T *yuv_queue;
-// currently we take pixel deltas between frames if they're above 50,
-// and add them all together.
+
+// we take abs of pixels between previousFrame and currentFrame
+// but consider 40 of that to be noise
+// if it's above 40 we consider that pixel as having changed
+unsigned int threshold_tally;
 // if total is above yuv_threshold we consider that to be motion
 unsigned int yuv_threshold = 900000;
 // if abs diff of pixels is above this, the pixel has seen motion
@@ -27,15 +31,16 @@ unsigned int yuv_threshold = 900000;
 #define NEON_BATCH 16
 #define ARMV6_BATCH 4
 
-// for first iteration, this just copies into previous buffer
-int8_t detection_row_batch = -1;
-unsigned int threshold_tally;
+
+bool process = false;
 unsigned int yuv_frame_counter = 0;
+unsigned int detect_at = 1; // next frame number to test for motion
 
 // globals to help iterate over pixel rows
 uint8_t** ptr; // pointer to motionDetection.processing.pointers
 unsigned int rows_processed;
 
+// frame rate calculation variables
 time_t previous_time = 0;
 unsigned int fps = 0; // count frames per second to track hiccups
 unsigned int fps_rate = 0;
@@ -157,33 +162,30 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     */
 
     clock_t begin, end;
-    if (yuv_frame_counter >= motionDetection.detection_at) {
+    if (yuv_frame_counter == detect_at) {
         // Perform motion detection
         begin = clock();
 
         mmal_buffer_header_mem_lock(buffer);
-        memcpy(motionDetection.yuvBuffer, buffer->data, settings_buffer_length);
+        memcpy(motionDetection.currentFrame, buffer->data, settings_buffer_length);
         mmal_buffer_header_mem_unlock(buffer);
 
         // just copy, then bail
         threshold_tally = 0;
-        detection_row_batch = 1;
-
-        // reset pointers
+        process = true;
 
         // schedule next detection
-        pthread_mutex_lock(&motionDetectionMutex);
-        motionDetection.detection_at = yuv_frame_counter + motionDetection.detection_sleep;
+        detect_at = yuv_frame_counter + motionDetection.detection_sleep;
 
         // reset pointers
         rows_processed = 0;
         ptr = motionDetection.processing.pointers;
-        pthread_mutex_unlock(&motionDetectionMutex);
         end = clock();
 
         printf("YUV COPY. Time: %f FPS: %d\n", (double)(end - begin) / CLOCKS_PER_SEC, fps_rate);
-
-    } else if (detection_row_batch > 0) {
+    }
+    
+    if (process) {
         begin = clock();
         unsigned int count = 0;
 
@@ -193,7 +195,7 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         #ifdef PI_ZERO
         count = detection_armv6();
         #else
-        count = detection_armv6();
+        count = detection();
         #endif
         #endif
 
@@ -204,49 +206,33 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             printf("Done with batches\n");
         }
 
-        if (detection_row_batch == motionDetection.processing.batches) {
-            // no more batches
-            detection_row_batch = 0;
-        } else {
-            detection_row_batch++;
-        }
-
         end = clock();
 
         printf("DETECTION. Pixel delta: %d threshold: %d Time: %f FPS: %d cnt: %d\n", threshold_tally, yuv_threshold, (double)(end - begin) / CLOCKS_PER_SEC, fps_rate, count);
 
         if (threshold_tally > yuv_threshold) {
             // we exceeded the threshold, don't need to process any more batches
-            detection_row_batch = 0;
+            process = false;
+
+            // if motion is detected, check again in 2 seconds
+            detect_at = yuv_frame_counter - 1 + (settings_fps * 2);
 
             pthread_mutex_lock(&motionDetectionMutex);
             motionDetection.motion_count++;
             motionDetection.pixel_delta = threshold_tally;
-            // if motion is detected, check again in 2 seconds
-            motionDetection.detection_at = yuv_frame_counter - 1 + (settings_fps * 2);
             pthread_mutex_unlock(&motionDetectionMutex);
             // only copy if motion detected ....
             // this lets us detect slow moving items
-            memcpy(motionDetection.previousFrame, motionDetection.yuvBuffer, settings_buffer_length);
+            memcpy(motionDetection.previousFrame, motionDetection.currentFrame, settings_buffer_length);
 
         } else {
             pthread_mutex_lock(&motionDetectionMutex);
             motionDetection.motion_count = 0;
             motionDetection.pixel_delta = threshold_tally;
-            // next detection is already scheduled so no need to update motionDetection.detection_at here
+            // next detection is already scheduled so no need to update detect_at here
             pthread_mutex_unlock(&motionDetectionMutex);
         }
 
-    } else if (detection_row_batch == -1) {
-        mmal_buffer_header_mem_lock(buffer);
-        // First run, copy into previous
-        memcpy(motionDetection.previousFrame, buffer->data, settings_buffer_length);
-        mmal_buffer_header_mem_unlock(buffer);
-        mmal_buffer_header_release(buffer);
-        send_buffers_to_port(port, yuv_queue);
-        // ensure we don't get here again
-        detection_row_batch = 0;
-        return;
     }
 
     mmal_buffer_header_release(buffer);

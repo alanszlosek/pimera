@@ -96,8 +96,6 @@ void reconfigureRegion(SETTINGS* settings) {
         free(motionDetection.processing.pointers);
         motionDetection.processing.pointers = NULL;
     }
-    // TODO: chnage to no more -1
-    motionDetection.processing.batches = motionDetection.detection_sleep - 1;
 
     motionDetection.processing.pointers = (uint8_t**) malloc(
         // start c, end c, start p
@@ -128,7 +126,7 @@ void reconfigureRegion(SETTINGS* settings) {
         j = i;
         // pointer to start of row in current
         motionDetection.processing.pointers[i++] = 
-            motionDetection.yuvBuffer + row_offset;
+            motionDetection.currentFrame + row_offset;
 
         // pointer to end of that row in current
         motionDetection.processing.pointers[i++] = motionDetection.processing.pointers[j] + row_length;
@@ -160,12 +158,13 @@ void reconfigureRegion(SETTINGS* settings) {
 }
 void initDetection(SETTINGS* settings) {
     motionDetection.detection_sleep = settings->h264.fps / settings->motion_check_frequency;
-    motionDetection.detection_at = motionDetection.detection_sleep;
+
+    motionDetection.processing.batches = motionDetection.detection_sleep;
 
     motionDetection.stream_sleep = settings->h264.fps / 3;
 
     motionDetection.previousFrame = (uint8_t*) malloc( settings->mjpeg.y_length );
-    motionDetection.yuvBuffer = (uint8_t*) malloc( settings->mjpeg.y_length );
+    motionDetection.currentFrame = (uint8_t*) malloc( settings->mjpeg.y_length );
 
     motionDetection.motion_count = 0;
 
@@ -187,7 +186,7 @@ void initDetection(SETTINGS* settings) {
 
 void freeDetection() {
     free(motionDetection.previousFrame);
-    free(motionDetection.yuvBuffer);
+    free(motionDetection.currentFrame);
 }
 
 void setDefaultSettings(SETTINGS* settings) {
