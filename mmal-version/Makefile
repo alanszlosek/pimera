@@ -1,7 +1,3 @@
-# apt install $(CC)
-THIS_FILE := $(lastword $(MAKEFILE_LIST))
-
-
 OBJ=obj
 SRC=src
 CC=gcc
