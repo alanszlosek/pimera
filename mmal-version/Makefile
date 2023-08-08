@@ -10,6 +10,9 @@ CFLAGS=-O2
 
 DEBUG=-g
 
+default:
+	@echo "Available targets: plain, zero, three, four"
+
 plain: pimera
 
 zero: CFLAGS+=-DPI_ZERO=1 -D__ARM_ACLE=1
