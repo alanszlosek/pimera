@@ -15,7 +15,7 @@ default:
 
 plain: pimera
 
-zero: CFLAGS+=-DPI_ZERO=1 -D__ARM_ACLE=1
+zero: CFLAGS+=-DPI_ZERO=1
 zero: pimera
 
 three: CFLAGS+=-DPI_THREE=1
