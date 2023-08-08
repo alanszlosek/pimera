@@ -6,9 +6,11 @@ OBJ=obj
 SRC=src
 CC=gcc
 CFLAGS=-O2
+# -Wall
 
 DEBUG=-g
 
+plain: pimera
 
 zero: CFLAGS+=-DPI_ZERO=1 -D__ARM_ACLE=1
 zero: pimera
