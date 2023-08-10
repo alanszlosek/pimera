@@ -1,0 +1,15 @@
+[Unit]
+Description=CPU Metrics
+After=network.target
+
+[Service]
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/pimera/cpu-metrics
+SyslogIdentifier=cpu-metrics
+Environment=STATSD_SERVER=192.168.1.173
+ExecStart=/home/pi/pimera/cpu-metrics/cpu-metrics
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
