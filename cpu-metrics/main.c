@@ -217,7 +217,7 @@ int main(int argc, const char **argv) {
     if (!statsd_port) {
         statsd_port = "8125";
     }
-    if (!skip_temperature) {
+    if (skip_temperature) {
         collect_temperature = false;
     }
 
