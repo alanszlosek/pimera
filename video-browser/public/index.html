@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Browse Videos</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Browse Videos</title>
 
 <style>
 html {
@@ -21,6 +21,10 @@ html,body,button,input,textarea,div,em,a {
 body {
     margin-top: 50px;
 }
+
+
+
+
 /*
 * {
     font-size: 1.05em;
@@ -32,7 +36,7 @@ body, button, input, textarea {
 img {
     width: 100%;
 }
-button, #tags > div {
+button, nav > div {
     background-color: #f7ca88;
     border: 1px solid;
     border-radius: .15em;
@@ -46,10 +50,10 @@ button, #tags > div {
     vertical-align: middle;
     width: auto;
 }
-button.active, #tags > div.active {
+button.active, #tags > .active {
     background-color: #3372b3;
 }
-button.disabled, #tags > div.disabled {
+button.disabled, #tags > .disabled {
     background-color: #eee;
     border: 1px dashed;
     color: black;
@@ -193,14 +197,15 @@ div.search input {
 }
 
 #tags {
+    /*
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
-}
-#tags > div {
-    /*
-    padding: 10px;
     */
+}
+#tags > button {
+    line-height: 1.2em;
+    padding: .6em 0.4em;
 }
 .tags a {
     margin-right: 10px;
@@ -218,83 +223,86 @@ div.search input {
     z-index: 10;
 }
 #preview > img {
+    height: 100%;
+    width: 100%;
+    object-fit: contain;
+}
+
+#recordings {
+    padding-left: 38%;
+}
+#recordings a {
+    margin-right: 7px;
+}
+#playerAndTags {
+    position: fixed;
+    width: 35%;
+}
+/*
+#playerAndTags {
+    height: auto;
+    display: grid;
+    grid-template-columns: 35% 65%;
+}
+*/
+#videoTag {
     width: 100%;
 }
+#controls {
+    display: grid;
+    grid-template-columns: 20% 40% 40%;
+}
+#videoDuration {
+    text-align: right;
+}
+
+/*
+video::-webkit-media-controls-panel {
+    display: flex !important;
+    opacity: 1 !important;
+}
+*/
 
 </style>
 </head>
 <body id="body">
 
-<div id="nav">
-</div>
+    <nav class="flex five" id="nav">
+        <div id="streamsTabButton">Stream</div>
+        <div id="recordingsTabButton">Recordings</div>
+        <div id="tagsTabButton">#</div>
+        <div id="prevTabButton" data-tab="false">Prev</div>
+        <div id="nextTabButton" data-tab="false">Next</div>
+    </nav>
 
-<div id="streams" class="main" style="display: grid;grid-template-columns: 50% 50%; gap: 1px;">
-</div>
+    <div id="streamsContainer" class="hidden">
+        <div id="streams" class="main" style="display: grid;grid-template-columns: 50% 50%; gap: 1px;">
+        </div>
+    </div>
 
-<div id="tags"></div>
+    <div id="recordingsContainer" class="hidden">
+        <div id="playerAndTags">
+            <div id="player">
+                <video id="videoTag"></video>
+                <div id="controls">
+                    <button id="playPause">Play</button>
+                    <div id="videoTime"></div>
+                    <div id="videoDuration"></div>
+                </div>
+            </div>
+            <div id="tags">tags</div>
+        </div>
+        <div id="recordings" class="main">
 
-<div id="main" class="main">
+        </div>
 
-</div>
+    </div>
+    <div id="otherContainer"></div>
+
+
+
+
 <script>
-var ajax = {
-
-    start: function() {
-    },
-    stop: function() {
-    },
-    get: function(url, callback) {
-        var request = new XMLHttpRequest();
-        ajax.start();
-        request.open('GET', url, true);
-
-        request.addEventListener('load', function() {
-            if (request.status >= 200 && request.status < 400) {
-                try {
-                    var data = JSON.parse(request.responseText);
-                    callback(null, data);
-                } catch (e) {
-                    callback("JSON parse: " + e.message);
-                }
-            } else {
-                // We reached our target server, but it returned an error
-                callback('Did not get 20x or 30x HTTP status');
-            }
-            ajax.stop();
-        });
-
-        request.addEventListener('error', function(event) {
-            callback('GET failed. Did we lose connectivity?');
-            ajax.stop();
-        });
-
-        request.send();
-    },
-
-    post: function(url, data, callback) {
-        var request = new XMLHttpRequest();
-        ajax.start();
-        request.open('POST', url, true);
-        request.setRequestHeader('Content-Type', 'application/json; charset=UTF-8');
-        request.addEventListener('load', function() {
-            if (request.status >= 200 && request.status < 400) {
-                // Success!
-                var data = JSON.parse(request.responseText);
-                callback(null, data);
-            } else {
-                // We reached our target server, but it returned an error
-                callback('Did not get 20x or 30x HTTP status');
-            }
-            ajax.stop();
-        });
-
-        request.addEventListener('error', function(event) {
-            callback('POST failed. Did we lose connectivity?');
-            ajax.stop();
-        });
-        request.send(JSON.stringify(data));
-    }
-};
 
 var drawChildren = function(container, children) {
     /*
@@ -359,13 +367,28 @@ var tag = function(tagName, attributes, children) {
     return element;
 };
 
+
+let prettySeconds = function(seconds) {
+    //let hours = Math.round(seconds / (60*60));
+    //seconds = seconds % SECONDS_IN_HOUR;
+    let minutes = Math.round(seconds / 60);
+    seconds = Math.round(seconds % 60);
+    return ('00' + minutes).slice(-2) + ':' + ('00' + seconds).slice(-2);
+};
+
 var handles = {
     body: document.body,
-    videos: document.getElementById('main'),
+    videos: document.getElementById('recordings'),
     tags: document.getElementById('tags'),
+    nav: document.getElementById('nav'),
+
+    streams: document.getElementById('streams'),
 
     preview: null
 };
+
+
+
 
 /*
 KEYBOARD INPUT THOUGHTS
@@ -379,8 +402,8 @@ Questions
 
 */
 var handlers = {
-    keydown: {
-        body: function(e) {
+    body: {
+        keydown: function(e) {
             console.log(e)
             // left arrow
             switch (e.key) {
@@ -394,6 +417,7 @@ var handlers = {
                 case ' ':
                     e.preventDefault();
                     e.stopPropagation();
+                    recordings.togglePlay();
                     if (currentlyPlaying) {
                         if (currentlyPlaying.paused) {
                             currentlyPlaying.play();
@@ -427,12 +451,12 @@ var handlers = {
                 // k key. VIM up, previous video
                 case 'k':
                     e.preventDefault();
-                    prev();
+                    recordings.playPrev();
                     break;
                 // j key. VIM down, next video)
                 case 'j':
                     e.preventDefault();
-                    next();
+                    recordings.playNext();
                     break;
                 
 
@@ -468,8 +492,17 @@ var handlers = {
         }
     },
 
-    click: {
-        main: function(e) {
+    tags: {
+        click: function(event) {
+            var action = event.target.getAttribute('data-action');
+            if (action in recordings) {
+                recordings[action](event);
+            }
+        }
+    },
+    // hmm, this doesn't quite work. when controls show, they capture the click to play
+    recordings: {
+        click: function(e) {
             if (e.target.tagName == 'A') {
                 var el = e.target;
                 e.preventDefault();
@@ -478,7 +511,7 @@ var handlers = {
                     'DIV',
                     {
                         id: 'preview',
-                        style: 'top: ' + window.scrollY + 'px'
+                        style: 'top: ' + window.scrollY + 'px; height: ' + window.innerHeight + 'px'
                     },
                     [
                         tag('IMG', {src: el.getAttribute('href')}, [])
@@ -490,176 +523,187 @@ var handlers = {
                 });
                 handles.body.appendChild(handles.preview);
             }
-            if (e.target.tagName == 'VIDEO') {
-                e.target.play();
+            if (e.target.tagName == 'IMG') {
+                recordings.play(e.target.parentNode);
             }
             console.log(e.target);
-        }
-    },
-    // hmm, this doesn't quite work. when controls show, they capture the click to play
-    mouseover: {
-        main: function(e) {
+        },
+        mouseover: function(e) {
             if (e.target.tagName == 'VIDEO') {
                 e.target.setAttribute('controls', 'controls');
             }
-        }
-    },
-    mouseout: {
-        main: function(e) {
+        },
+        mouseout: function(e) {
             if (e.target.tagName == 'VIDEO') {
                 e.target.removeAttribute('controls');
             }
         }
+    },
+    videoTag: {
+        ended: function(e) {
+            console.log(e);
+            recordings.stateEnded();
+            // go to next
+            recordings.playNext();
+        },
+        /*
+        loadedmetadata: function(e) {
+            videos.loadIndex++;
+            videos.loadMeta();
+        },
+        */
+        error: function(e) {
+            recordings.playNext();
+        },
+        playing: function() {
+            recordings.statePlaying();
+        },
+        pause: function() {
+            recordings.statePaused();
+        },
+        /*
+        playing: function(e) {
+            console.log(e);
+            // remove all other borders
+            for (let vid of recordings.handles.recordings.children) {
+                vid.classList.remove('selected');
+            }
+
+            e.target.parentNode.classList.add('selected');
+            currentlyPlaying = e.target;
+        },
+        */
+        keys: function(e) {
+            e.preventDefault();
+        },
+        timeupdate: function(e) {
+            let tag = e.target;
+            if (tag.currentTime) {
+                recordings.handles.playbackTime.innerText = prettySeconds(tag.currentTime);
+                recordings.handles.videoDuration.innerText = prettySeconds(tag.duration);
+            }
+        }
+    },
+    playPause: {
+        click: function() {
+            recordings.togglePlay();
+        }
+    },
+    prevTabButton: {
+        click: function(e) {
+            recordings.previous();
+            e.stopPropagation();
+        }
+    },
+    nextTabButton: {
+        click: function(e) {
+            recordings.next();
+            e.stopPropagation();
+        }
     }
 };
 // Attach the above handlers
-for (var event in handlers) {
-    var ids = handlers[event];
-    for (var id in ids) {
-        document.getElementById(id).addEventListener(event, ids[id]);
+for (var id in handlers) {
+    var events = handlers[id];
+    for (var event in events) {
+        document.getElementById(id).addEventListener(event, events[event]);
     }
 }
 
-handles.tags.addEventListener('click', function(event) {
-    var action = event.target.getAttribute('data-action');
-    if (action in videos) {
-        videos[action](event);
-    }
-});
 
 
 
 // CONVERT THE VIDEOS JSON INTO DIV AND VIDEO TAGS
-let listeners = {
-    ended: function(e) {
-        console.log(e);
-        // go to next
-        next();
-    },
-    loadedmetadata: function(e) {
-        videos.loadIndex++;
-        videos.loadMeta();
-    },
-    error: function(e) {
-        videos.loadIndex++;
-        videos.loadMeta();
-    },
-    playing: function(e) {
-        console.log(e);
-        // remove all other borders
-        for (let vid of document.getElementsByTagName('video')) {
-            vid.parentNode.classList.remove('selected');
-        }
+var recordings = {
+    handles: {
+        container: document.getElementById('recordingsContainer'),
+        recordings: document.getElementById('recordings'),
+        tags: document.getElementById('tags'),
 
-        e.target.parentNode.classList.add('selected');
-        currentlyPlaying = e.target;
+        videoPlayer: document.getElementById('videoTag'),
+        playPause: document.getElementById('playPause'),
+        playbackTime: document.getElementById('videoTime'),
+        videoDuration: document.getElementById('videoDuration')
     },
-    keys: function(e) {
-        e.preventDefault();
-    }
-};
-var videos = {
     offset: 0,
     limit: 51,
     items: 0,
     loadIndex: 0,
     tagIds: new Set(),
+    current: null,
 
-    init: function() {
-        this.loadTags();
+    show: function() {
+        let self = this;
+        self.handles.container.style.display = 'block';
 
-        let tags = [];
-        for (let i = 0; i < videos.limit; i++) {
-            var videoTag = tag(
-                'video',
-                //{'preload': 'metadata', 'controls': 'controls', 'data-src': '', 'data-id': ''},
-                {'preload': 'metadata', 'data-src': '', 'data-id': ''},
-                []
-            );
-            /*
-            Relevant events
-            canplay
-            complete
-            ended
-            loadeddata
-            loadedmetadata
-            pause
-            play
-            playing
-            */
-            videoTag.addEventListener('ended', listeners.ended);
-            videoTag.addEventListener('loadedmetadata', listeners.loadedmetadata);
-            videoTag.addEventListener('error', listeners.error);
-            videoTag.addEventListener('playing', listeners.playing);
-            videoTag.addEventListener('keydown', listeners.keys);
-            videoTag.addEventListener('keyup', listeners.keys);
-            tags.push(
-                tag('div',
-                    {},
-                    [
-                        videoTag,
-                        tag('div', {}, []),
-                        tag('div', {class: 'tags'}, [])
-                    ]
-                )
-            );
-        }
-        drawChildren(handles.videos, tags);
+        self.loadTags();
+        this.hidden = false;
     },
+    hide: function() {
+        let self = this;
+        self.handles.container.style.display = 'none';
+
+        self.handles.videoPlayer.pause();
+        this.hidden = true;
+    },
+
     loadTags: function() {
         let self = this;
         let tagIds = self.tagIds.size ? '?tagIds=' + Array.from(self.tagIds).join(',') : '';
-        ajax.get('/api/tags' + tagIds, function(error, data) {
-            if (error) {
-                console.log(error);
-                return;
-            }
-            var tags = [
-                tag(
-                    'div',
-                    {'data-action': 'previous'},
-                    ['prev']
-                ),
-                tag(
-                    'div',
-                    {'data-action': 'next'},
-                    ['next']
-                ),
-                tag(
-                    'div',
-                    {'data-action': 'anyTag', 'data-id': 'ANY', 'class': (videos.tagIds.size == 0 ? 'active' : '')},
-                    ['ANY']
-                ),
-                tag(
-                    'div',
-                    {'data-action': 'noTags', 'data-id': 'NONE', 'class': (videos.tagIds.has('NONE') ? 'active' : '')},
-                    ['NONE']
-                )
-            ];
-            for (var i in data) {
-                var t = data[i];
-
-                let className;
-                if (self.tagIds.has(t.id)) {
-                    className = 'active';
-                } else if (t.count == 0) {
-                    className = 'disabled';
-                }
-                
-                tags.push(
+        fetch('/api/tags' + tagIds)
+            .then(function(response) {
+                return response.json();
+            })
+            .then(function(data) {
+                var tags = [
                     tag(
-                        'div',
-                        {
-                            'data-id': t.id,
-                            'data-action': 'filterByTag',
-                            'class': className
-                        },
-                        [t.tag + ' (' + t.count + ')']
+                        'button',
+                        {'data-action': 'previous'},
+                        ['prev']
+                    ),
+                    tag(
+                        'button',
+                        {'data-action': 'next'},
+                        ['next']
+                    ),
+                    tag(
+                        'button',
+                        {'data-action': 'anyTag', 'data-id': 'ANY', 'class': (self.tagIds.size == 0 ? 'active' : '')},
+                        ['ANY']
+                    ),
+                    tag(
+                        'button',
+                        {'data-action': 'noTags', 'data-id': 'NONE', 'class': (self.tagIds.has('NONE') ? 'active' : '')},
+                        ['NONE']
                     )
-                );
-            }
-            drawChildren(handles.tags, tags);
-        });
+                ];
+                for (var i in data) {
+                    var t = data[i];
+
+                    let className;
+                    if (self.tagIds.has(t.id)) {
+                        className = 'active';
+                    } else if (t.count == 0) {
+                        className = 'disabled';
+                    }
+                    
+                    tags.push(
+                        tag(
+                            'button',
+                            {
+                                'data-id': t.id,
+                                'data-action': 'filterByTag',
+                                'class': className
+                            },
+                            [t.tag] // + ' (' + t.count + ')']
+                        )
+                    );
+                }
+                drawChildren(self.handles.tags, tags);
+            })
+            .catch(function(error) {
+                console.log(error);
+            });;
 
     },
 
@@ -668,38 +712,23 @@ var videos = {
         var url = '/api/files?offset=' + self.offset + '&limit=' + self.limit;
         if (self.tagId != 0) {
             // tagId of -1 returns videos that don't have an tags
-            //url += '&tagId=' + self.tagId;
             url += '&tagIds=' + Array.from(self.tagIds).join(',');
         }
-        // Cancel previous video loading that loadMetaData() is doing
 
-        // Fill with video tags if not already there
+        fetch(url)
+            .then(function(response) {
+                return response.json();
+            })
+            .then(function(files) {
+                // this pauses loading
+                self.loadIndex = self.limit;
+                self.items = files.length;
 
-        ajax.get(url, function(error, files) {
-            if (error) {
-                console.log(error);
-                return;
-            }
-
-            // this pauses loading
-            videos.loadIndex = videos.limit;
-            videos.items = files.length;
-
-            // loop through video tags, shift file off files
-            // update attributes
-            // push video tag onto queue
-            handles.videos.childNodes.forEach(function(videoContainer, index) {
-                if (files.length > 0) {
-                    let video = files.shift();
-                    let videoTag = videoContainer.childNodes[0];
-                    let videoName = videoContainer.childNodes[1];
+                let tags = [];
+                for (let i = 0; i < files.length; i++) {
+                    let video = files[i];
                     let videoImagePrefix = video.path.replace(/\/[0-9]{8}/, '').replace('.mp4', '');
 
-                    videoTag.setAttribute('data-id', video.id);
-                    videoTag.setAttribute('data-src', '/movies' + video.path);
-                    videoTag.setAttribute('poster', '/images' + videoImagePrefix + '.jpg');
-                    videoName.innerText = video.filename;
-                    videoContainer.style.display = 'block';
                     var tags2 = [];
                     for (let j = 0; j < video.tags.length; j++) {
                         var tagName = video.tags[j];
@@ -711,119 +740,203 @@ var videos = {
                             )
                         );
                     }
-                    drawChildren(videoContainer.querySelectorAll('.tags')[0], tags2);
-                } else {
-                    // hide this tag
-                    videoContainer.style.display = 'none';
-                    console.log('hding');
+
+                    tags.push(
+                        tag(
+                            'div',
+                            {
+                                'data-id': video.id,
+                                'data-src': '/movies' + video.path,
+                                'data-poster': '/images' + videoImagePrefix + '.jpg'
+                            },
+                            [
+                                tag(
+                                    'img',
+                                    {src: '/images' + videoImagePrefix + '.jpg'},
+                                    []
+                                ),
+                                tag(
+                                    'div',
+                                    {},
+                                    [video.filename]
+                                ),
+                                tag(
+                                    'div',
+                                    {},
+                                    tags2
+                                )
+                            ]
+                        )
+                    )
                 }
+                drawChildren(self.handles.recordings, tags);
+                self.loadIndex = 0;
+                self.current = null;
+                //self.loadMeta();
+            })
+            .catch(function(error) {
+                console.log(error);
             });
-            videos.loadIndex = 0;
-            videos.loadMeta();
-        });
     },
 
     loadMeta: function() {
-        if (videos.items < videos.loadIndex) {
+        let self = this;
+        if (self.items < self.loadIndex) {
             return;
         }
-        if (videos.loadIndex >= videos.limit) {
+        if (self.loadIndex >= self.limit) {
             return;
         }
-        var videoContainer = handles.videos.childNodes[ videos.loadIndex ];
-        let videoTag = videoContainer.childNodes[0];
+        var videoContainer = handles.self.childNodes[ self.loadIndex ];
+        let videoTag = self.handles.recordings.childNodes[0];
         videoTag.src = videoTag.getAttribute('data-src');
     },
 
     anyTag: function(e) {
-        videos.offset = 0;
-        videos.tagIds.clear();
-        videos.loadTags();
-        videos.load();
+        let self = this;
+        self.offset = 0;
+        self.tagIds.clear();
+        self.loadTags();
+        self.load();
     },
     noTags: function(e) {
+        let self = this;
         let tagId = parseInt(e.target.getAttribute('data-id'));
         e.target.classList.toggle('active');
-        videos.tagIds.delete(tagId);
+        self.tagIds.delete(tagId);
         if (e.target.classList.contains('active')) {
-            videos.tagIds.add(tagId);
+            self.tagIds.add(tagId);
         }
-        videos.offset = 0;
+        self.offset = 0;
 
-        videos.tagIds.clear();
-        videos.tagIds.add('NONE');
-        videos.loadTags();
-        videos.load();
+        self.tagIds.clear();
+        self.tagIds.add('NONE');
+        self.loadTags();
+        self.load();
     },
     filterByTag: function(e) {
+        let self = this;
         // toggle
         // check state, add or remove from filter list as appropriate
         let tagId = parseInt(e.target.getAttribute('data-id'));
         e.target.classList.toggle('active');
-        videos.tagIds.delete(tagId);
+        self.tagIds.delete(tagId);
         if (e.target.classList.contains('active')) {
-            videos.tagIds.add(tagId);
+            self.tagIds.add(tagId);
         }
-        videos.offset = 0;
-        //videos.tagId = e.target.getAttribute('data-id');
-        videos.loadTags();
-        videos.load();
+        self.offset = 0;
+        //self.tagId = e.target.getAttribute('data-id');
+        self.loadTags();
+        self.load();
     },
     previous: function(e) {
-        videos.offset -= videos.limit;
-        if (videos.offset < 0) {
-            videos.offset = 0;
+        let self = this;
+        self.offset -= self.limit;
+        if (self.offset < 0) {
+            self.offset = 0;
         }
-        videos.load();
+        self.load();
     },
     next: function(e) {
-        videos.offset += videos.limit;
-        videos.load();
-    }
-};
+        let self = this;
+        self.offset += self.limit;
+        self.load();
+    },
 
+    play: function(div) {
+        let self = this;
+        self.current = div;
 
-
-
-var currentlyPlaying;
-
-var prev = function() {
-    var temp;
-    if (currentlyPlaying) {
-        currentlyPlaying.pause();
-
-        if (
-            currentlyPlaying.parentNode.previousElementSibling
-            &&
-            currentlyPlaying.parentNode.previousElementSibling.childNodes[0]) {
-            // assuming it's loaded
-            currentlyPlaying = currentlyPlaying.parentNode.previousElementSibling.childNodes[0];
-            currentlyPlaying.focus();
-            currentlyPlaying.play();
+        for (let vid of recordings.handles.recordings.children) {
+            vid.classList.remove('selected');
         }
+        div.classList.add('selected');
 
-    }
-};
+        let y = div.getBoundingClientRect().top + window.scrollY - 50;
+        window.scroll({
+            top: y,
+            behavior: 'smooth'
+        });
 
-var next = function() {
-    if (currentlyPlaying) {
-        currentlyPlaying.pause();
+        self.handles.videoPlayer.poster = div.getAttribute('data-poster');
+        self.handles.videoPlayer.src = div.getAttribute('data-src');
+        self.handles.videoPlayer.play();
+    },
+    playNext: function() {
+        let self = this;
+        if (self.hidden) {
+            return;
+        }
+        if (self.current) {
+            if (self.current.nextElementSibling) {
+                self.play( self.current.nextElementSibling);
+            }
+        } else {
+            let divs = self.handles.recordings.querySelectorAll('div');
+            if (divs.length) {
+                self.play(divs[0]);
+            }
+        }
+        /*
+         else {
+            // nothing current, start at the first video
+            var tags = handles.videos.querySelectorAll('div');
+            if (tags.length > 0) {
+                tags[0].childNodes[0].play();
+            }
         
-        if (currentlyPlaying.parentNode.nextElementSibling
-            &&
-            currentlyPlaying.parentNode.nextElementSibling.childNodes[0]) {
-            currentlyPlaying = currentlyPlaying.parentNode.nextElementSibling.childNodes[0];
-            currentlyPlaying.focus();
-            currentlyPlaying.play();
         }
-    } else {
-        // nothing current, start at the first video
-        var tags = handles.videos.querySelectorAll('div');
-        if (tags.length > 0) {
-            tags[0].childNodes[0].play();
+        */
+    },
+    playPrev: function() {
+        let self = this;
+        if (self.hidden) {
+            return;
         }
+        if (self.current) {
+            if (self.current.previousElementSibling) {
+                self.play( self.current.previousElementSibling);
+            }
+        }
+        /*
+         else {
+            // nothing current, start at the first video
+            var tags = handles.videos.querySelectorAll('div');
+            if (tags.length > 0) {
+                tags[0].childNodes[0].play();
+            }
+        
+        }
+        */
+    },
+    togglePlay: function() {
+        if (self.hidden) {
+            return;
+        }
+        if (this.playing) {
+            this.handles.videoPlayer.pause();
+            this.handles.playPause.innerText = 'Play';
+        } else {
+            this.handles.videoPlayer.play();
+            this.handles.playPause.innerText = 'Pause';
+        }
+    },
+    
+    statePlaying: function() {
+        this.playing = true;
+        this.handles.playPause.innerText = 'Pause';
+    },
+    stateEnded: function() {
+        recordings.playing = false;
+        this.handles.playPause.innerText = 'Play';
+    },
+    statePaused: function() {
+        recordings.playing = false;
+        this.handles.playPause.innerText = 'Play';
     }
 };
+
+
 
 var rewind = function(big) {
     if (currentlyPlaying) {
@@ -840,81 +953,125 @@ var forward = function(big) {
     }
 };
 
-var archive = function() {
-    if (currentlyPlaying) {
-        var id = currentlyPlaying.getAttribute('data-id');
-        ajax.post('/api/video/archive/' + encodeURIComponent(id), {}, function(error) {
-            if (error) {
-                console.log(error);
-                return;
-            }
-            var el = currentlyPlaying;
-            next();
-            el.parentNode.remove();
-        });
-    }
-};
 
-var tagVideo = function(tagId) {
-    if (currentlyPlaying) {
-        var id = currentlyPlaying.getAttribute('data-id');
-        ajax.post('/api/video/tag/' + encodeURIComponent(id), {tagId: tagId}, function(error, data) {
-            if (error) {
-                console.log(error);
-                return;
-            }
-            var tags;
-            if (data.tags) {
-                tags = '#' + data.tags.join(' #');
-            }
-            currentlyPlaying.parentNode.querySelectorAll('.tags')[0].innerText = tags;
-        });
-    }
-};
-
-videos.init();
+//videos.init();
 //videos.load();
 
-let streams = document.getElementById('streams');
-let cameras = {};
-setInterval(
-	function() {
-		ajax.get('/api/cameras.json', function(err, data) {
-			if (err) {
-				console.log(err);
-				return;
-			}
-			for (let key in cameras) {
-				if (!(key in data)) {
-					// remove
-					streams.removeChild( cameras[key] );
-					delete cameras[key];
-					delete handles[key];
-				}
-			}
-			for (let key in data) {
-				if (key in cameras) {
-				} else {
-					console.log('not found ' + key);
-					// add
-					//let id = 'cam_' + getRandomInt(1, 200);
+let streams = {
+    handles: {
+        container: document.getElementById('streamsContainer'),
+        streams: document.getElementById('streams')
+    },
+    intervalHandle: null,
+    cameras: {},
+    show: function() {
+        let self = this;
 
-					let img = tag('IMG', {}, []);
-					img.src = 'http://' + key + ':8080/stream.mjpeg?ts=' + Date.now();
+        self.handles.container.style.display = 'block';
 
-					cameras[ key ] = tag('DIV', {}, [img]);
-					/*
-					if (!(key == '192.168.1.167' || key == '192.168.1.177')) {
-						handles[key] = img;
-					}
-					*/
-					streams.appendChild(cameras[key]);
-				}
-			}
-		});
-	},
-	1000
-);
+        let fetchCameras = function() {
+            fetch('/api/cameras.json')
+                .then(function(response) {
+                    return response.json();
+                })
+                .then(function(data) {
+                    for (let key in self.cameras) {
+                        if (!(key in data)) {
+                            // remove
+                            self.handles.streams.removeChild( self.cameras[key] );
+                            delete self.cameras[key];
+                            delete handles[key];
+                        }
+                    }
+                    for (let key in data) {
+                        if (key in self.cameras) {
+                        } else {
+                            console.log('not found ' + key);
+                            // add
+                            //let id = 'cam_' + getRandomInt(1, 200);
+
+                            let img = tag('IMG', {}, []);
+                            img.src = 'http://' + key + ':8080/stream.mjpeg?ts=' + Date.now();
+
+                            self.cameras[ key ] = tag('DIV', {}, [img]);
+                            /*
+                            if (!(key == '192.168.1.167' || key == '192.168.1.177')) {
+                                handles[key] = img;
+                            }
+                            */
+                            self.handles.streams.appendChild(self.cameras[key]);
+                        }
+                    }
+                })
+                .catch(function(error) {
+                    console.log(error);
+                });
+        };
+        fetchCameras();
+        self.intervalHandle = setInterval(fetchCameras, 1000);
+    },
+    hide: function() {
+        let self = this;
+        clearInterval( self.intervalHandle );
+
+        for (let key in self.cameras) {
+            self.handles.streams.removeChild( self.cameras[key]);
+        }
+        self.cameras = {};
+    }
+};
+
+
+let modules = {
+    'streams': streams,
+    'recordings': recordings
+};
+
+
+
+
+
+
+
+let tabs = {
+    'streamsTabButton': 'streams',
+    'recordingsTabButton': 'recordings'
+};
+// TODO convert this to id and event struct?
+handles.nav.addEventListener('click', function (event) {
+    var target = event.target;
+    if (target.tagName == 'I') {
+        target = target.parentNode;
+    }
+    if (target.getAttribute('data-tab') == 'false') {
+        event.stopPropagation();
+        return;
+    }
+
+    let id = target.getAttribute('id');
+    showTab(id);
+});
+var showTab = function (id) {
+    let container = tabs[id];
+    //app.tab = index;
+    console.log(id);
+    for (let key in tabs) {
+        let value = tabs[key];
+        if (key == id) {
+            document.getElementById(key).classList.add('success');
+            //document.getElementById(value).style.display = 'block';
+            modules[value].show();
+            //modules[i].show();
+            //current = modules[i];
+
+            
+        } else {
+            document.getElementById(key).classList.remove('success');
+            //document.getElementById(value).style.display = 'none';
+            modules[value].hide();
+        }
+    };
+};
 
 </script>
 </body>
