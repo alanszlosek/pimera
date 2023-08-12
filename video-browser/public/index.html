@@ -195,6 +195,17 @@ div.search input {
     top: 0;
     width: 100%;
 }
+#nav {
+    display: grid;
+    grid-template-columns: 27.5% 27.5% 15% 15% 15%;
+}
+#nav div {
+    padding: 0;
+
+    font-size: x-large;
+    line-height: 1.7em;
+
+}
 
 #tags {
     /*
@@ -234,6 +245,9 @@ div.search input {
 #recordings a {
     margin-right: 7px;
 }
+#recordings small {
+    display: block;
+}
 #playerAndTags {
     position: fixed;
     width: 35%;
@@ -267,12 +281,12 @@ video::-webkit-media-controls-panel {
 </head>
 <body id="body">
 
-    <nav class="flex five" id="nav">
+    <nav id="nav">
         <div id="streamsTabButton">Stream</div>
-        <div id="recordingsTabButton">Recordings</div>
-        <div id="tagsTabButton">#</div>
-        <div id="prevTabButton" data-tab="false">Prev</div>
-        <div id="nextTabButton" data-tab="false">Next</div>
+        <div id="recordingsTabButton">Videos</div>
+        <div id="tagsNavButton" data-tab="false" class="disabled">#</div>
+        <div id="prevNavButton" data-tab="false" class="disabled">&lt;</div>
+        <div id="nextNavButton" data-tab="false" class="disabled">&gt;</div>
     </nav>
 
     <div id="streamsContainer" class="hidden">
@@ -381,6 +395,10 @@ var handles = {
     videos: document.getElementById('recordings'),
     tags: document.getElementById('tags'),
     nav: document.getElementById('nav'),
+
+    tagsNavButton: document.getElementById('tagsNavButton'),
+    prevNavButton: document.getElementById('prevNavButton'),
+    nextNavButton: document.getElementById('nextNavButton'),
 
     streams: document.getElementById('streams'),
 
@@ -506,7 +524,8 @@ var handlers = {
             if (e.target.tagName == 'A') {
                 var el = e.target;
                 e.preventDefault();
-                console.log('link');
+                
+                recordings.pause();
                 handles.preview = tag(
                     'DIV',
                     {
@@ -589,13 +608,13 @@ var handlers = {
             recordings.togglePlay();
         }
     },
-    prevTabButton: {
+    prevNavButton: {
         click: function(e) {
             recordings.previous();
             e.stopPropagation();
         }
     },
-    nextTabButton: {
+    nextNavButton: {
         click: function(e) {
             recordings.next();
             e.stopPropagation();
@@ -634,6 +653,7 @@ var recordings = {
 
     show: function() {
         let self = this;
+        recordings.enableButtons();
         self.handles.container.style.display = 'block';
 
         self.loadTags();
@@ -641,10 +661,21 @@ var recordings = {
     },
     hide: function() {
         let self = this;
+        recordings.disableButtons();
         self.handles.container.style.display = 'none';
 
         self.handles.videoPlayer.pause();
         this.hidden = true;
+    },
+    disableButtons: function() {
+        for (let id of ['tagsNavButton', 'prevNavButton', 'nextNavButton']) {
+            handles[id].classList.add('disabled');
+        }
+    },
+    enableButtons: function() {
+        for (let id of ['tagsNavButton', 'prevNavButton', 'nextNavButton']) {
+            handles[id].classList.remove('disabled');
+        }
     },
 
     loadTags: function() {
@@ -656,16 +687,6 @@ var recordings = {
             })
             .then(function(data) {
                 var tags = [
-                    tag(
-                        'button',
-                        {'data-action': 'previous'},
-                        ['prev']
-                    ),
-                    tag(
-                        'button',
-                        {'data-action': 'next'},
-                        ['next']
-                    ),
                     tag(
                         'button',
                         {'data-action': 'anyTag', 'data-id': 'ANY', 'class': (self.tagIds.size == 0 ? 'active' : '')},
@@ -728,6 +749,9 @@ var recordings = {
                 for (let i = 0; i < files.length; i++) {
                     let video = files[i];
                     let videoImagePrefix = video.path.replace(/\/[0-9]{8}/, '').replace('.mp4', '');
+                    let fn = video.filename;
+                    let dt = fn.substring(0,4) + '-' + fn.substring(4,6) + '-' + fn.substring(6,8) + ' ' +
+                        fn.substring(8,10) + ':' + fn.substring(10,12) + ':' + fn.substring(12,14);
 
                     var tags2 = [];
                     for (let j = 0; j < video.tags.length; j++) {
@@ -758,10 +782,17 @@ var recordings = {
                                 tag(
                                     'div',
                                     {},
+                                    [dt]
+                                ),
+                                /*
+                                tag(
+                                    'small',
+                                    {},
                                     [video.filename]
                                 ),
+                                */
                                 tag(
-                                    'div',
+                                    'small',
                                     {},
                                     tags2
                                 )
@@ -862,6 +893,9 @@ var recordings = {
         self.handles.videoPlayer.src = div.getAttribute('data-src');
         self.handles.videoPlayer.play();
     },
+    pause: function() {
+        this.handles.videoPlayer.pause();
+    },
     playNext: function() {
         let self = this;
         if (self.hidden) {
@@ -914,13 +948,15 @@ var recordings = {
             return;
         }
         if (this.playing) {
-            this.handles.videoPlayer.pause();
-            this.handles.playPause.innerText = 'Play';
+            this.pause();
+            //this.handles.videoPlayer.pause();
+            //this.handles.playPause.innerText = 'Play';
         } else {
             this.handles.videoPlayer.play();
-            this.handles.playPause.innerText = 'Pause';
+            //this.handles.playPause.innerText = 'Pause';
         }
     },
+    
     
     statePlaying: function() {
         this.playing = true;
