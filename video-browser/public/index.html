@@ -19,7 +19,13 @@ html,body,button,input,textarea,div,em,a {
     padding: 0;
 }
 body {
-    margin-top: 50px;
+    display: grid;
+    grid-template-rows: 40px 1fr;
+    width: 100vw;
+    height: 100vh;
+}
+body > div {
+    overflow: auto;
 }
 
 
@@ -97,35 +103,6 @@ div.search input {
     width: 100%;
 }
 
-.flex {
-    display: flex;
-    flex-direction: row;
-    flex-wrap: wrap;
-    margin: 0;
-    width: auto;
-}
-.flex > * {
-    flex: 1;
-    padding-left:0;
-}
-.flex.one > * {
-    flex: 1 1 100%;
-}
-.flex.three > div {
-    flex: 1 1 33.3333%;
-}
-.flex.four > div {
-    flex: 1 1 25%;
-}
-.flex.five > * {
-    flex: 1 1 20%;
-}
-.flex.six > div {
-    flex: 1 1 16.6666%;
-}
-.flex.seven > div {
-    flex: 1 1 14.2857%;
-}
 .button.smaller {
     font-size: smaller; /*.75em;*/
 }
@@ -167,11 +144,6 @@ div.search input {
     display: grid;
     grid-template-columns: 50% 50%;
 }
-@media screen and (min-width: 370px) {
-    .main {
-        grid-template-columns: 33% 33% 33%;
-    }
-}
 
 .main video {
     width: 100%;
@@ -189,11 +161,7 @@ div.search input {
 
 #nav {
     background-color: #fff;
-    position: fixed;
     height: 40px;
-    left: 0;
-    top: 0;
-    width: 100%;
 }
 #nav {
     display: grid;
@@ -208,11 +176,7 @@ div.search input {
 }
 
 #tags {
-    /*
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    */
+    margin-top: 10px;
 }
 #tags > button {
     line-height: 1.2em;
@@ -239,24 +203,57 @@ div.search input {
     object-fit: contain;
 }
 
-#recordings {
-    padding-left: 38%;
+#recordingsContainer {
+    display: grid;
+    grid-template-rows: 1fr 2fr;
+    height: 100%;
+    width: 100%;
 }
+
+
 #recordings a {
     margin-right: 7px;
 }
 #recordings small {
     display: block;
 }
-#playerAndTags {
-    position: fixed;
-    width: 35%;
+
+
+
+#recordings {
+    overflow: auto;
+}
+#tags {
+    display: none;
+}
+@media (min-width: 800px) {
+    #recordingsContainer {
+        grid-template-columns: 35% 65%;
+        grid-template-rows: auto;
+    }
+    .main {
+        grid-template-columns: 33% 33% 33%;
+    }
+
+    #recordings {
+        display: grid;
+        /*
+        overflow: auto;
+        */
+    }
+    #recordings .meta {
+        display: grid;
+        grid-template-columns: 50% 50%;
+    }
+    #recordings .duration {
+        text-align: right;
+    }
 }
 /*
-#playerAndTags {
-    height: auto;
-    display: grid;
-    grid-template-columns: 35% 65%;
+#tags {
+    position: fixed;
+    width: 35%;
+    margin-top: 600px;
 }
 */
 #videoTag {
@@ -264,23 +261,15 @@ div.search input {
 }
 #controls {
     display: grid;
-    grid-template-columns: 20% 40% 40%;
+    grid-template-columns: 20% 20% 20% 30% 30%;
 }
 #videoDuration {
     text-align: right;
 }
 
-/*
-video::-webkit-media-controls-panel {
-    display: flex !important;
-    opacity: 1 !important;
-}
-*/
-
 </style>
 </head>
 <body id="body">
-
     <nav id="nav">
         <div id="streamsTabButton">Stream</div>
         <div id="recordingsTabButton">Videos</div>
@@ -288,32 +277,29 @@ video::-webkit-media-controls-panel {
         <div id="prevNavButton" data-tab="false" class="disabled">&lt;</div>
         <div id="nextNavButton" data-tab="false" class="disabled">&gt;</div>
     </nav>
-
-    <div id="streamsContainer" class="hidden">
-        <div id="streams" class="main" style="display: grid;grid-template-columns: 50% 50%; gap: 1px;">
+    <div>
+        <div id="streamsContainer" class="hidden">
+            <div id="streams" class="main" style="display: grid;grid-template-columns: 50% 50%; gap: 1px;">
+            </div>
         </div>
-    </div>
-
-    <div id="recordingsContainer" class="hidden">
-        <div id="playerAndTags">
+        
+        <div id="tags">tags</div>
+        <div id="recordingsContainer" class="hidden">
             <div id="player">
-                <video id="videoTag"></video>
+                <video id="videoTag" playsinline></video>
                 <div id="controls">
                     <button id="playPause">Play</button>
+                    <button id="playPrevious">Prev</button>
+                    <button id="playNext">Next</button>
                     <div id="videoTime"></div>
                     <div id="videoDuration"></div>
                 </div>
             </div>
-            <div id="tags">tags</div>
+            <div id="recordings" class="main"></div>
         </div>
-        <div id="recordings" class="main">
-
-        </div>
-
+        <div id="otherContainer"></div>
     </div>
-    <div id="otherContainer"></div>
-
-
+    
 
 
 <script>
@@ -469,7 +455,7 @@ var handlers = {
                 // k key. VIM up, previous video
                 case 'k':
                     e.preventDefault();
-                    recordings.playPrev();
+                    recordings.playPrevious();
                     break;
                 // j key. VIM down, next video)
                 case 'j':
@@ -601,11 +587,31 @@ var handlers = {
                 recordings.handles.playbackTime.innerText = prettySeconds(tag.currentTime);
                 recordings.handles.videoDuration.innerText = prettySeconds(tag.duration);
             }
+        },
+        mouseover: function(e) {
+
+        },
+        mouseout: function(e) {
+
+        },
+        click: function(e) {
+            e.target.toggleAttribute('controls');
+
         }
     },
     playPause: {
         click: function() {
             recordings.togglePlay();
+        }
+    },
+    playPrevious: {
+        click: function() {
+            recordings.playPrevious();
+        }
+    },
+    playNext: {
+        click: function() {
+            recordings.playNext();
         }
     },
     prevNavButton: {
@@ -618,6 +624,19 @@ var handlers = {
         click: function(e) {
             recordings.next();
             e.stopPropagation();
+        }
+    },
+    tagsNavButton: {
+        click: function() {
+            if (tagsModule.visible) {
+                recordings.showPlayer();
+                recordings.showVideos();
+                tagsModule.hide();
+            } else {
+                recordings.hidePlayer();
+                recordings.hideVideos();
+                tagsModule.show();
+            }
         }
     }
 };
@@ -636,11 +655,14 @@ for (var id in handlers) {
 var recordings = {
     handles: {
         container: document.getElementById('recordingsContainer'),
+        player: document.getElementById('player'),
         recordings: document.getElementById('recordings'),
         tags: document.getElementById('tags'),
 
         videoPlayer: document.getElementById('videoTag'),
         playPause: document.getElementById('playPause'),
+        playPrevious: document.getElementById('playPrevious'),
+        playNext: document.getElementById('playNext'),
         playbackTime: document.getElementById('videoTime'),
         videoDuration: document.getElementById('videoDuration')
     },
@@ -650,14 +672,21 @@ var recordings = {
     loadIndex: 0,
     tagIds: new Set(),
     current: null,
+    scrollY: 0,
+
 
     show: function() {
         let self = this;
         recordings.enableButtons();
-        self.handles.container.style.display = 'block';
+        self.handles.container.style.display = 'grid';
+
+        if (self.tagIds.size == 0) {
+            self.tagIds.add('ANY');
+        }
 
         self.loadTags();
         this.hidden = false;
+        self.load();
     },
     hide: function() {
         let self = this;
@@ -677,6 +706,19 @@ var recordings = {
             handles[id].classList.remove('disabled');
         }
     },
+    showVideos: function() {
+        this.handles.recordings.style.display = 'grid';
+    },
+    hideVideos: function() {
+        this.scrollY = window.scrollY;
+        this.handles.recordings.style.display = 'none';
+    },
+    showPlayer: function() {
+        this.handles.player.style.display = 'block';
+    },
+    hidePlayer: function() {
+        this.handles.player.style.display = 'none';
+    },
 
     loadTags: function() {
         let self = this;
@@ -689,7 +731,7 @@ var recordings = {
                 var tags = [
                     tag(
                         'button',
-                        {'data-action': 'anyTag', 'data-id': 'ANY', 'class': (self.tagIds.size == 0 ? 'active' : '')},
+                        {'data-action': 'anyTag', 'data-id': 'ANY', 'class': (self.tagIds.has('ANY') ? 'active' : '')},
                         ['ANY']
                     ),
                     tag(
@@ -731,7 +773,7 @@ var recordings = {
     load: function() {
         var self = this;
         var url = '/api/files?offset=' + self.offset + '&limit=' + self.limit;
-        if (self.tagId != 0) {
+        if (self.tagIds.size > 0) {
             // tagId of -1 returns videos that don't have an tags
             url += '&tagIds=' + Array.from(self.tagIds).join(',');
         }
@@ -750,8 +792,11 @@ var recordings = {
                     let video = files[i];
                     let videoImagePrefix = video.path.replace(/\/[0-9]{8}/, '').replace('.mp4', '');
                     let fn = video.filename;
+
+                    // TODO: use regex to split this and resolution and fps
                     let dt = fn.substring(0,4) + '-' + fn.substring(4,6) + '-' + fn.substring(6,8) + ' ' +
                         fn.substring(8,10) + ':' + fn.substring(10,12) + ':' + fn.substring(12,14);
+                    let fps = fn.substring(fn.length - 6, fn.length - 4);
 
                     var tags2 = [];
                     for (let j = 0; j < video.tags.length; j++) {
@@ -781,8 +826,11 @@ var recordings = {
                                 ),
                                 tag(
                                     'div',
-                                    {},
-                                    [dt]
+                                    {class:"meta"},
+                                    [
+                                        tag('div', {}, [dt]),
+                                        tag('div', {class: 'duration'}, [fps + ' fps | ' + prettySeconds(video.durationSeconds)])
+                                    ]
                                 ),
                                 /*
                                 tag(
@@ -857,6 +905,11 @@ var recordings = {
         }
         self.offset = 0;
         //self.tagId = e.target.getAttribute('data-id');
+
+        // TODO: merge anyTag() and noTags() into here
+
+        self.tagIds.delete('ANY');
+        self.tagIds.delete('NONE');
         self.loadTags();
         self.load();
     },
@@ -882,13 +935,14 @@ var recordings = {
             vid.classList.remove('selected');
         }
         div.classList.add('selected');
+        // This doesn't work as well as I hoped
+        //div.scrollIntoView({behavior: 'smooth'});
+        /*
+        let y = div.offsetTop;
+        this.handles.recordings.scrollTop = y;
+        */
 
-        let y = div.getBoundingClientRect().top + window.scrollY - 50;
-        window.scroll({
-            top: y,
-            behavior: 'smooth'
-        });
-
+        // TODO: maybe wait a beat for poster to load before change video?
         self.handles.videoPlayer.poster = div.getAttribute('data-poster');
         self.handles.videoPlayer.src = div.getAttribute('data-src');
         self.handles.videoPlayer.play();
@@ -904,6 +958,10 @@ var recordings = {
         if (self.current) {
             if (self.current.nextElementSibling) {
                 self.play( self.current.nextElementSibling);
+            } else {
+                // Load next page?
+                // TODO: use promise from next()
+                self.next();
             }
         } else {
             let divs = self.handles.recordings.querySelectorAll('div');
@@ -922,7 +980,7 @@ var recordings = {
         }
         */
     },
-    playPrev: function() {
+    playPrevious: function() {
         let self = this;
         if (self.hidden) {
             return;
@@ -959,6 +1017,22 @@ var recordings = {
     
     
     statePlaying: function() {
+        let self = this;
+        // prevent height flicker
+        // clear previous CSS height,
+        // then wait until video loaded and player adjusts
+        // to new video, then pin that height
+        /*
+        let r = this.handles.videoPlayer.getBoundingClientRect();
+        this.handles.videoPlayer.style.height = '';
+        setTimeout(
+            function() {
+                self.handles.videoPlayer.style.height = r.height + 'px';
+            },
+            100
+        );
+        */
+
         this.playing = true;
         this.handles.playPause.innerText = 'Pause';
     },
@@ -969,6 +1043,31 @@ var recordings = {
     statePaused: function() {
         recordings.playing = false;
         this.handles.playPause.innerText = 'Play';
+    }
+};
+
+let tagsModule = {
+    scrollY: 0,
+    visible: false,
+    handles: {
+        button: document.getElementById('tagsNavButton'),
+        container: document.getElementById('tags')
+    },
+    show: function() {
+        this.handles.button.classList.add('success');
+        this.handles.container.style.display = 'block';
+        this.visible = true;
+        window.scroll({
+            top: 0,
+            behavior: 'smooth'
+        });
+
+    },
+    hide: function() {
+        this.scrollY = window.scrollY;
+        this.handles.button.classList.remove('success');
+        this.handles.container.style.display = 'none';
+        this.visible = false;
     }
 };
 
@@ -1108,6 +1207,9 @@ var showTab = function (id) {
         }
     };
 };
+
+//showTab('streamsTabButton');
+showTab('recordingsTabButton');
 
 </script>
 </body>
