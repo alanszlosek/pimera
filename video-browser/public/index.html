@@ -20,12 +20,13 @@ html,body,button,input,textarea,div,em,a {
 }
 body {
     display: grid;
-    grid-template-rows: 40px 1fr;
+    grid-template-rows: 45px 1fr;
     width: 100vw;
     height: 100vh;
 }
 body > div {
     overflow: auto;
+    overflow-x: hidden;
 }
 
 
@@ -159,6 +160,18 @@ div.search input {
     overflow-wrap:break-word;
 }
 
+#recordings {
+	display: grid;
+	grid-template-columns: 50% 50%;
+}
+#recordings > div {
+    border: 1px solid #fff;
+    padding: 2px;
+}
+#recordings > div.selected {
+    background-color: beige;
+}
+
 #nav {
     background-color: #fff;
     height: 40px;
@@ -226,20 +239,21 @@ div.search input {
 #tags {
     display: none;
 }
-@media (min-width: 800px) {
+/*@media (min-width: 800px) {
+  */
+@media (orientation: landscape) {
     #recordingsContainer {
         grid-template-columns: 35% 65%;
         grid-template-rows: auto;
     }
-    .main {
+    @media (min-width: 800px) {
+    #recordings {
         grid-template-columns: 33% 33% 33%;
+    }
     }
 
     #recordings {
         display: grid;
-        /*
-        overflow: auto;
-        */
     }
     #recordings .meta {
         display: grid;
@@ -256,15 +270,41 @@ div.search input {
     margin-top: 600px;
 }
 */
+
+#player {
+    display: grid;
+    grid-template-columns: 60% 40%
+}
 #videoTag {
     width: 100%;
 }
 #controls {
     display: grid;
-    grid-template-columns: 20% 20% 20% 30% 30%;
+    grid-template-columns: 50% 50%;
+    grid-template-rows: 33% 33% 33%;
+}
+#controls > * {
+    display: block;
+}
+#playPause {
+    grid-column: 1 / 3;
+}
+#playPrevious {
+    grid-row: 2;
+}
+#playNext {
+    grid-row: 2;
+}
+#videoTime {
 }
 #videoDuration {
-    text-align: right;
+	text-align: right;
+}
+
+@media (orientation: landscape) {
+    #player {
+        grid-template-columns: 100%;
+    }
 }
 
 </style>
@@ -283,7 +323,7 @@ div.search input {
             </div>
         </div>
         
-        <div id="tags">tags</div>
+	<div id="tags">tags</div>
         <div id="recordingsContainer" class="hidden">
             <div id="player">
                 <video id="videoTag" playsinline></video>
@@ -295,7 +335,7 @@ div.search input {
                     <div id="videoDuration"></div>
                 </div>
             </div>
-            <div id="recordings" class="main"></div>
+            <div id="recordings"></div>
         </div>
         <div id="otherContainer"></div>
     </div>
@@ -499,7 +539,7 @@ var handlers = {
     tags: {
         click: function(event) {
             var action = event.target.getAttribute('data-action');
-            if (action in recordings) {
+            if (!event.target.classList.contains('disabled') && action in recordings) {
                 recordings[action](event);
             }
         }
@@ -583,9 +623,14 @@ var handlers = {
         },
         timeupdate: function(e) {
             let tag = e.target;
-            if (tag.currentTime) {
+	    // Compare before we update the DOM unnecessarily
+            if (tag.currentTime != recordings.currentTime && tag.currentTime) {
                 recordings.handles.playbackTime.innerText = prettySeconds(tag.currentTime);
+		recordings.currentTime = tag.currentTime;
+	    }
+            if (tag.duration != recordings.currentDuration && tag.duration) {
                 recordings.handles.videoDuration.innerText = prettySeconds(tag.duration);
+		recordings.currentDuration = tag.duration;
             }
         },
         mouseover: function(e) {
@@ -673,9 +718,11 @@ var recordings = {
     tagIds: new Set(),
     current: null,
     scrollY: 0,
+    currentTime: 0,
+    currentDuration: 0,
 
 
-    show: function() {
+    showTab: function() {
         let self = this;
         recordings.enableButtons();
         self.handles.container.style.display = 'grid';
@@ -684,13 +731,24 @@ var recordings = {
             self.tagIds.add('ANY');
         }
 
-        self.loadTags();
         this.hidden = false;
         self.load();
     },
-    hide: function() {
+    show: function() {
+        let self = this;
+        self.handles.container.style.display = 'grid';
+        this.hidden = false;
+    },
+    hideTab: function() {
         let self = this;
         recordings.disableButtons();
+        self.handles.container.style.display = 'none';
+
+        self.handles.videoPlayer.pause();
+        this.hidden = true;
+    },
+    hide: function() {
+        let self = this;
         self.handles.container.style.display = 'none';
 
         self.handles.videoPlayer.pause();
@@ -714,7 +772,7 @@ var recordings = {
         this.handles.recordings.style.display = 'none';
     },
     showPlayer: function() {
-        this.handles.player.style.display = 'block';
+        this.handles.player.style.display = 'grid';
     },
     hidePlayer: function() {
         this.handles.player.style.display = 'none';
@@ -1054,6 +1112,7 @@ let tagsModule = {
         container: document.getElementById('tags')
     },
     show: function() {
+	recordings.loadTags();
         this.handles.button.classList.add('success');
         this.handles.container.style.display = 'block';
         this.visible = true;
@@ -1099,7 +1158,7 @@ let streams = {
     },
     intervalHandle: null,
     cameras: {},
-    show: function() {
+    showTab: function() {
         let self = this;
 
         self.handles.container.style.display = 'block';
@@ -1145,7 +1204,7 @@ let streams = {
         fetchCameras();
         self.intervalHandle = setInterval(fetchCameras, 1000);
     },
-    hide: function() {
+    hideTab: function() {
         let self = this;
         clearInterval( self.intervalHandle );
 
@@ -1188,14 +1247,13 @@ handles.nav.addEventListener('click', function (event) {
 });
 var showTab = function (id) {
     let container = tabs[id];
-    //app.tab = index;
-    console.log(id);
+    // TODO: bail if tab is disabled in classList
     for (let key in tabs) {
         let value = tabs[key];
         if (key == id) {
             document.getElementById(key).classList.add('success');
             //document.getElementById(value).style.display = 'block';
-            modules[value].show();
+            modules[value].showTab();
             //modules[i].show();
             //current = modules[i];
 
@@ -1203,7 +1261,7 @@ var showTab = function (id) {
         } else {
             document.getElementById(key).classList.remove('success');
             //document.getElementById(value).style.display = 'none';
-            modules[value].hide();
+            modules[value].hideTab();
         }
     };
 };
