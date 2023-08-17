@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Browse Videos</title>
+<title>PiMera Videos</title>
 
 <style>
 html {
@@ -161,8 +161,8 @@ div.search input {
 }
 
 #recordings {
-	display: grid;
-	grid-template-columns: 50% 50%;
+    display: grid;
+    grid-template-columns: 50% 50%;
 }
 #recordings > div {
     border: 1px solid #fff;
@@ -239,17 +239,15 @@ div.search input {
 #tags {
     display: none;
 }
-/*@media (min-width: 800px) {
-  */
 @media (orientation: landscape) {
     #recordingsContainer {
         grid-template-columns: 35% 65%;
         grid-template-rows: auto;
     }
     @media (min-width: 800px) {
-    #recordings {
-        grid-template-columns: 33% 33% 33%;
-    }
+        #recordings {
+            grid-template-columns: 33% 33% 33%;
+        }
     }
 
     #recordings {
@@ -298,7 +296,7 @@ div.search input {
 #videoTime {
 }
 #videoDuration {
-	text-align: right;
+    text-align: right;
 }
 
 @media (orientation: landscape) {
@@ -323,7 +321,7 @@ div.search input {
             </div>
         </div>
         
-	<div id="tags">tags</div>
+    <div id="tags">tags</div>
         <div id="recordingsContainer" class="hidden">
             <div id="player">
                 <video id="videoTag" playsinline></video>
@@ -623,14 +621,14 @@ var handlers = {
         },
         timeupdate: function(e) {
             let tag = e.target;
-	    // Compare before we update the DOM unnecessarily
+            // Compare before we update the DOM unnecessarily
             if (tag.currentTime != recordings.currentTime && tag.currentTime) {
                 recordings.handles.playbackTime.innerText = prettySeconds(tag.currentTime);
-		recordings.currentTime = tag.currentTime;
-	    }
+                recordings.currentTime = tag.currentTime;
+            }
             if (tag.duration != recordings.currentDuration && tag.duration) {
                 recordings.handles.videoDuration.innerText = prettySeconds(tag.duration);
-		recordings.currentDuration = tag.duration;
+                recordings.currentDuration = tag.duration;
             }
         },
         mouseover: function(e) {
@@ -1112,7 +1110,7 @@ let tagsModule = {
         container: document.getElementById('tags')
     },
     show: function() {
-	recordings.loadTags();
+        recordings.loadTags();
         this.handles.button.classList.add('success');
         this.handles.container.style.display = 'block';
         this.visible = true;
