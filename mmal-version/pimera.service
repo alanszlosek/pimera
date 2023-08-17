@@ -1,0 +1,16 @@
+[Unit]
+Description=Pimera
+After=network.target
+
+[Service]
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/pimera
+SyslogIdentifier=pimera
+ExecStart=/home/pi/pimera/pimera
+Restart=always
+StandardOutput=file:/var/log/pimera.log
+StandardError=file:/var/log/pimera.log
+
+[Install]
+WantedBy=multi-user.target
