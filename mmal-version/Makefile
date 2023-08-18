@@ -23,11 +23,11 @@ four: CFLAGS+=-mfpu=neon
 four: pimera
 
 
-pimera: $(OBJ)/main.o $(OBJ)/http.o $(OBJ)/log.o $(OBJ)/detection.o $(OBJ)/camera.o $(OBJ)/mjpeg.o
+pimera: $(OBJ)/main.o $(OBJ)/http.o $(OBJ)/log.o $(OBJ)/detection.o $(OBJ)/camera.o $(OBJ)/mjpeg.o $(OBJ)/video.o
 	$(CC) $(DEBUG) $(CFLAGS) -o pimera \
 		-Wl,--no-as-needed \
 		-lmmal_core -lmmal_util -lmmal_vc_client -lvcos -lbcm_host -lm -lpthread \
-		$(OBJ)/main.o $(OBJ)/http.o $(OBJ)/log.o $(OBJ)/detection.o $(OBJ)/camera.o $(OBJ)/mjpeg.o
+		$(OBJ)/main.o $(OBJ)/http.o $(OBJ)/log.o $(OBJ)/detection.o $(OBJ)/camera.o $(OBJ)/mjpeg.o $(OBJ)/video.o
 
 $(OBJ)/main.o: $(SRC)/main.c
 	$(CC) $(CFLAGS) -o $@ \
@@ -52,3 +52,7 @@ $(OBJ)/camera.o: $(SRC)/camera.c
 $(OBJ)/mjpeg.o: $(SRC)/mjpeg.c
 	$(CC) $(CFLAGS) -o $@ \
 		-c $(SRC)/mjpeg.c
+
+$(OBJ)/video.o: $(SRC)/video.c
+	$(CC) $(CFLAGS) -o $@ \
+		-c $(SRC)/video.c
