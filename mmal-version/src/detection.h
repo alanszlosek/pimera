@@ -40,10 +40,6 @@ typedef struct {
     int boundaryLength;
 
     unsigned int motion_count;
-    char filename1[200];
-    char filename2[200];
-    int fd;
-
 } MOTION_DETECTION_T;
 extern MOTION_DETECTION_T motionDetection;
 extern pthread_mutex_t motionDetectionMutex;

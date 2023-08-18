@@ -54,10 +54,7 @@ pthread_mutex_t restart_mutex;
 int restart = 0;
 
 
-// TODO: change this to fixed list of MMAL buffers
-uint8_t* h264_buffer;
-size_t h264_buffer_length = 0;
-size_t h264_buffer_size = 0;
+
 
 //MMAL_BUFFER_HEADER_T* h264_buffers[ 60 ];
 
@@ -657,16 +654,6 @@ int main(int argc, const char **argv) {
     readSettings(&settings);
 
     initDetection(&settings);
-    
-    h264_buffer_size = 
-        (settings.width * settings.height)
-        *
-        (settings.h264.fps * 2);
-    h264_buffer = (uint8_t*) malloc(h264_buffer_size);
-    if (!h264_buffer) {
-        logError("FAILED TO ALLOCATE H264 BUFFER", __func__);
-        // OF SIZE %u\n", h264_buffer_size);
-    }
 
 
     bcm_host_init();
@@ -682,7 +669,7 @@ int main(int argc, const char **argv) {
         destroy_camera(handles.camera);
         return EX_ERROR;
 
-    } else if ((status = create_h264_encoder(&handles.h264_encoder, &handles.h264_encoder_pool, &handles.h264_encoder_connection, handles.full_splitter->output[0], h264Callback, &settings.h264)) != MMAL_SUCCESS) {
+    } else if ((status = create_h264_encoder(&handles.h264_encoder, &handles.h264_encoder_pool, &handles.h264_encoder_connection, handles.full_splitter->output[0], h264_callback, &settings.h264)) != MMAL_SUCCESS) {
         logError("createH26create_h264_encoder4Encoder failed",  __func__);
         destroy_splitter(handles.full_splitter, handles.full_splitter_connection);
         destroy_camera(handles.camera);
@@ -714,6 +701,18 @@ int main(int argc, const char **argv) {
         return EX_ERROR;
     }
     mjpeg_config(handles.mjpeg_encoder_pool->queue);
+
+    // last mile h264 config
+    char videoFilePattern[256];
+    snprintf(videoFilePattern, 255, "%s/%%s_%s_%dx%dx%d.", settings.videoPath, settings.hostname, settings.width, settings.height, settings.h264.fps);
+    h264_config(
+        handles.h264_encoder_pool->queue,
+        videoFilePattern,
+        // h264_buffer_size
+        (settings.width * settings.height)
+        *
+        (settings.h264.fps * 2)
+    );
 
     status = mmal_port_enable(handles.resized_splitter->output[1], yuv_callback);
 
@@ -782,11 +781,6 @@ int main(int argc, const char **argv) {
     pthread_cancel(httpServerThreadId);
     // But we want to gracefully exit the mjpeg thread, instead of bail
     pthread_join(httpServerThreadId, &httpServerThreadStatus);
-
-    if (motionDetection.fd) {
-        close(motionDetection.fd);
-
-    }
 
     if (settings.verbose) {
         logInfo("Shutting down");

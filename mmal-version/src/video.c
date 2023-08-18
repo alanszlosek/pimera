@@ -1,20 +1,25 @@
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <stdbool.h>
+#include <stdio.h>
+
+#include "camera.h"
+#include "log.h"
 #include "video.h"
 
 
-void sendH264Buffers(MMAL_PORT_T* port, CALLBACK_USERDATA* userdata) {
-    // TODO: move this to main thread
-    if (port->is_enabled) {
-        MMAL_STATUS_T status;
-        MMAL_BUFFER_HEADER_T* new_buffer;
-        while ( (new_buffer = mmal_queue_get(userdata->handles->h264_encoder_pool->queue)) ) {
-            status = mmal_port_send_buffer(port, new_buffer);
-            if (status != MMAL_SUCCESS) {
-                logError("mmal_port_send_buffer failed, no buffer to return to h264 encoder port\n", __func__);
-                break;
-            }
-        }
-    }
-}
+MMAL_QUEUE_T *h264_queue = NULL;
+char* video_file_pattern;
+char video_file1[256];
+char video_file2[256];
+int video_fd;
+bool h264_motion = false;
+
+// TODO: change this to fixed list of MMAL buffers
+uint8_t* h264_buffer;
+size_t h264_buffer_length = 0;
+//size_t h264_buffer_size = 0;
 
 void h264BufferDebug(MMAL_BUFFER_HEADER_T* buffer) {
     fprintf(
@@ -36,44 +41,14 @@ void h264BufferDebug(MMAL_BUFFER_HEADER_T* buffer) {
 bool saving = 0;
 char h264FileKickoff[128];
 uint32_t h264FileKickoffLength;
-void h264Callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
-    CALLBACK_USERDATA *userdata;
-    SETTINGS *settings;
+void h264_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     struct timespec ts;
-    bool debug;
-
-
-    if (!port->userdata) {
-        logError("Did not find userdata in h264 callback", __func__);
-        debug = false;
-    } else {
-        userdata = (CALLBACK_USERDATA *)port->userdata;
-        settings = userdata->settings;
-        debug = settings->debug;
-    }
-
-    //h264BufferDebug(buffer);
-
-    if (buffer->cmd) {
-        logInfo("Found cmd in h264 buffer. Releasing");
-        mmal_buffer_header_release(buffer);
-        sendH264Buffers(port, userdata);
-        return;
-    }
-    // is this necessary during shutdown to prevent a bunch of callbacks with messed up data?
-    if (!buffer->length) {
-        mmal_buffer_header_release(buffer);
-        sendH264Buffers(port, userdata);
-        return;
-    }
     
     // TODO: concat this buffer with previous one containing timestamp
     // see here: https://forums.raspberrypi.com/viewtopic.php?t=220074
 
-    
 
     if (buffer->flags & MMAL_BUFFER_HEADER_FLAG_CONFIG) {
-        
         logInfo("Keeping h264 config data for later");
 
         if (buffer->length > 128) {
@@ -87,18 +62,17 @@ void h264Callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         }
         mmal_buffer_header_release(buffer);
 
-        sendH264Buffers(port, userdata);
+        send_buffers_to_port(port, h264_queue);
         return;
     }
 
     if (saving) {
         mmal_buffer_header_mem_lock(buffer);
-        write(motionDetection.fd, buffer->data, buffer->length);
+        write(video_fd, buffer->data, buffer->length);
         mmal_buffer_header_mem_unlock(buffer);
 
         // still have motion?
-        pthread_mutex_lock(&motionDetectionMutex);
-        if (motionDetection.motion_count) {
+        if (h264_motion) {
             // leave open
 
         // only close once we see an end of the frame of data,
@@ -108,16 +82,15 @@ void h264Callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             // TODO: do i need to wait for a certain type of data before closing?
 
             // save then close
-            logInfo("CLOSING %s\n", motionDetection.filename1);
-            close(motionDetection.fd);
-            motionDetection.fd = 0;
+            logInfo("CLOSING %s\n", video_file1);
+            close(video_fd);
+            video_fd = 0;
 
-            rename(motionDetection.filename1, motionDetection.filename2);
+            rename(video_file1, video_file2);
             saving = 0;
         }
         // TODO: don't need mutex around file descriptor
         
-        pthread_mutex_unlock(&motionDetectionMutex);
         mmal_buffer_header_release(buffer);
 
     } else {
@@ -155,8 +128,7 @@ void h264Callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         mmal_buffer_header_release(buffer);
 
         // Do we need to open new file?
-        pthread_mutex_lock(&motionDetectionMutex);
-        if (motionDetection.motion_count) {
+        if (h264_motion) {
             // open file
             struct timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
@@ -168,36 +140,50 @@ void h264Callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     
             // temporary so our h264 processing pipeline doesn't grab
             // a file that's still being written to
-            snprintf(motionDetection.filename1, sizeof(motionDetection.filename1), "%s/%s_%s_%dx%dx%d.", settings->videoPath, datetime, settings->hostname, settings->width, settings->height, settings->h264.fps);
-            strncpy(motionDetection.filename2, motionDetection.filename1, sizeof(motionDetection.filename1));
+            snprintf(video_file1, 255, video_file_pattern, datetime);
+            strncpy(video_file2, video_file1, sizeof(video_file1));
             // now append differing extensions
-            strcat(motionDetection.filename1, "_h264");
-            strcat(motionDetection.filename2, "h264");
+            strcat(video_file1, "_h264");
+            strcat(video_file2, "h264");
 
-            logInfo("OPENING %s\n", motionDetection.filename1);
+            logInfo("OPENING %s\n", video_file1);
 
-            motionDetection.fd = open(motionDetection.filename1, O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
+            video_fd = open(video_file1, O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
 
-            write(motionDetection.fd, h264FileKickoff, h264FileKickoffLength);
+            write(video_fd, h264FileKickoff, h264FileKickoffLength);
             /*
             for (int i = 0; i < h264_buffer_length; i++) {
                 MMAL_BUFFER_HEADER_T *b = h264_buffers[i];
                 mmal_buffer_header_mem_lock(b);
-                write(motionDetection.fd, b->data, b->length);
+                write(video_fd, b->data, b->length);
                 mmal_buffer_header_mem_unlock(b);
                 mmal_buffer_header_release( b );
             }
             */
-            write(motionDetection.fd, h264_buffer, h264_buffer_length);
+            write(video_fd, h264_buffer, h264_buffer_length);
             h264_buffer_length = 0;
 
             saving = 1;
         }
-        pthread_mutex_unlock(&motionDetectionMutex);
         
     }
 
-    sendH264Buffers(port, userdata);
+    send_buffers_to_port(port, h264_queue);
 }
 
-// END H264 FUNCTIONS
+void h264_config(MMAL_QUEUE_T *queue, char* path, size_t h264_buffer_size) {
+    h264_queue = queue;
+    video_file_pattern = path;
+
+    h264_buffer = (uint8_t*) malloc(h264_buffer_size);
+    if (!h264_buffer) {
+        logError("FAILED TO ALLOCATE H264 BUFFER", __func__);
+        // OF SIZE %u\n", h264_buffer_size);
+    }
+}
+
+void h264_motion_detected(bool yes) {
+    h264_motion = yes;
+
+    // would like to set frame/recording cutoffs here instead
+}
