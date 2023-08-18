@@ -6,7 +6,7 @@
 #include "interface/mmal/mmal_port.h"
 
 void h264_callback(MMAL_PORT_T*, MMAL_BUFFER_HEADER_T*);
-void h264_config(MMAL_QUEUE_T*, char*, size_t);
-void h264_motion_detected(bool);
+void h264_config(unsigned int, MMAL_QUEUE_T*, char*, size_t);
+void h264_motion_detected();
 
 #endif

@@ -218,7 +218,7 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             // if motion is detected, check again in 2 seconds
             detect_at = yuv_frame_counter - 1 + (settings_fps * 2);
 
-            h264_motion_detected(true);
+            h264_motion_detected();
             pthread_mutex_lock(&motionDetectionMutex);
             motionDetection.motion_count++;
             motionDetection.pixel_delta = threshold_tally;
@@ -228,7 +228,6 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             memcpy(motionDetection.previousFrame, motionDetection.currentFrame, settings_buffer_length);
 
         } else {
-            h264_motion_detected(false);
             pthread_mutex_lock(&motionDetectionMutex);
             motionDetection.motion_count = 0;
             motionDetection.pixel_delta = threshold_tally;

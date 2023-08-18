@@ -66,16 +66,6 @@ STATS_T stats;
 pthread_mutex_t statsMutex;
 
 
-// https://stackoverflow.com/questions/1675351/typedef-struct-vs-struct-definitions/
-typedef struct {
-    HANDLES *handles;
-    SETTINGS *settings;
-    char h264FileKickoff[128];
-    uint32_t h264FileKickoffLength;
-    int abort;
-} CALLBACK_USERDATA;
-
-
 void reconfigureRegion(SETTINGS* settings) {
     unsigned int x_start, x_end, y_start, y_end;
     unsigned int stride = settings->mjpeg.vcosWidth;
@@ -610,24 +600,12 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
 int main(int argc, const char **argv) {
     SETTINGS settings;
     HANDLES handles;
-    CALLBACK_USERDATA h264CallbackUserdata;
-
     MMAL_STATUS_T status = MMAL_SUCCESS;
 
     // threading
     pthread_t httpServerThreadId;
     void *httpServerThreadStatus;
-    pthread_t motionDetectionThreadId;
-    void *motionDetectionThreadStatus;
     int i, num;
-
-    MMAL_BUFFER_HEADER_T *buffer;
-
-
-    h264CallbackUserdata.handles = &handles;
-    h264CallbackUserdata.settings = &settings;
-    h264CallbackUserdata.h264FileKickoffLength = 0;
-
 
     pthread_mutex_init(&httpConnectionsMutex, NULL);
     pthread_mutex_init(&running_mutex, NULL);
@@ -706,6 +684,7 @@ int main(int argc, const char **argv) {
     char videoFilePattern[256];
     snprintf(videoFilePattern, 255, "%s/%%s_%s_%dx%dx%d.", settings.videoPath, settings.hostname, settings.width, settings.height, settings.h264.fps);
     h264_config(
+        settings.h264.fps,
         handles.h264_encoder_pool->queue,
         videoFilePattern,
         // h264_buffer_size
@@ -750,7 +729,7 @@ int main(int argc, const char **argv) {
     detection_threshold(settings.threshold);
 
 
-    handles.h264_encoder->output[0]->userdata = (struct MMAL_PORT_USERDATA_T *)&h264CallbackUserdata;
+    handles.h264_encoder->output[0]->userdata = NULL;
     logInfo("Sending buffers to h264 port");
     send_buffers_to_port(handles.h264_encoder->output[0], handles.h264_encoder_pool->queue);
 
