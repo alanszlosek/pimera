@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>PiMera Videos</title>
+<title>Browse Videos</title>
 
 <style>
 html {
@@ -216,6 +216,24 @@ div.search input {
     object-fit: contain;
 }
 
+#streamsContainer {
+    height: 100%;
+    width: 100%;
+}
+#streams {
+    display: grid;
+    grid-template-columns: 50% 50%;
+    grid-template-rows: 50% 50%;
+    gap: 1px;
+    height: 100%;
+    width: 100%;
+}
+#streams > img {
+    height: 100%;
+    width: 100%;
+    object-fit: contain;
+}
+
 #recordingsContainer {
     display: grid;
     grid-template-rows: 1fr 2fr;
@@ -239,15 +257,17 @@ div.search input {
 #tags {
     display: none;
 }
+/*@media (min-width: 800px) {
+  */
 @media (orientation: landscape) {
     #recordingsContainer {
         grid-template-columns: 35% 65%;
         grid-template-rows: auto;
     }
     @media (min-width: 800px) {
-        #recordings {
-            grid-template-columns: 33% 33% 33%;
-        }
+    #recordings {
+        grid-template-columns: 33% 33% 33%;
+    }
     }
 
     #recordings {
@@ -317,11 +337,11 @@ div.search input {
     </nav>
     <div>
         <div id="streamsContainer" class="hidden">
-            <div id="streams" class="main" style="display: grid;grid-template-columns: 50% 50%; gap: 1px;">
+            <div id="streams" class="main">
             </div>
         </div>
         
-    <div id="tags">tags</div>
+        <div id="tags">tags</div>
         <div id="recordingsContainer" class="hidden">
             <div id="player">
                 <video id="videoTag" playsinline></video>
@@ -596,7 +616,13 @@ var handlers = {
         },
         */
         error: function(e) {
+            // We sometimes get this event when the poster for a video is missing.
+            // Don't play next, let the current one play.
+            /*
+            console.log('Error');
+            console.log(e);
             recordings.playNext();
+            */
         },
         playing: function() {
             recordings.statePlaying();
@@ -1184,13 +1210,7 @@ let streams = {
 
                             let img = tag('IMG', {}, []);
                             img.src = 'http://' + key + ':8080/stream.mjpeg?ts=' + Date.now();
-
-                            self.cameras[ key ] = tag('DIV', {}, [img]);
-                            /*
-                            if (!(key == '192.168.1.167' || key == '192.168.1.177')) {
-                                handles[key] = img;
-                            }
-                            */
+                            self.cameras[ key ] = img; //tag('DIV', {}, [img]);
                             self.handles.streams.appendChild(self.cameras[key]);
                         }
                     }
