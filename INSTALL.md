@@ -31,3 +31,7 @@ TODO: adapt video-browser/api.py to work without Caddy
 
 1. Install mysql/mariadb, python3 and venv, the caddy webserver
 1. Clone the pimera repository
+1. Prepare mysql database
+1. Fetch YOLO model
+1. Update pimera/config.json with database credentials, path to YOLO model, path to videos, path to thumbnails
+1. 
