@@ -999,8 +999,6 @@ var recordings = {
         this.handles.recordings.scrollTop = y;
         */
 
-        // TODO: maybe wait a beat for poster to load before change video?
-        self.handles.videoPlayer.poster = div.getAttribute('data-poster');
         self.handles.videoPlayer.src = div.getAttribute('data-src');
         self.handles.videoPlayer.play();
     },
