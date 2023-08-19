@@ -21,7 +21,6 @@ basePath = config['videoPath']
 # folder where video posters and object detection result images should be saved
 thumbnailBasePath = config['thumbnailPath']
 
-
 def get_connection():
     global config
     return mysql.connector.connect(user=config['username'], password=config['password'], host=config['host'], database=config['database'])
@@ -57,6 +56,7 @@ class Detection:
                 skip = math.floor(fps / 4)
             else:
                 # TODO: write script to make filenames consistent, then remove this branch
+                fps = 20
                 skip = math.floor(20 / 4)
 
             # TODO: can we fetch from URL ... YES IT APPEARS SO
@@ -112,6 +112,10 @@ class Detection:
             if len(batch) > 0:
                 self.ProcessBatch(batch)
                 batch = []
+            
+            # calculate video duration in seconds
+            frameCount = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            durationSeconds = frameCount/fps
 
             # end frame loop
             cap.release()
@@ -142,7 +146,7 @@ class Detection:
 
             # update locations to signal we've run object detection on this file
             dbCursor = db.cursor(dictionary=True)
-            dbCursor.execute('UPDATE videos SET objectDetectionRan=1,objectDetectionRanAt=%s,objectDetectionRunSeconds=%s WHERE id=%s', (datetime.datetime.now().timestamp(), elapsed, rowId))
+            dbCursor.execute('UPDATE videos SET objectDetectionRan=1,objectDetectionRanAt=%s,objectDetectionRunSeconds=%s,durationSeconds=%s WHERE id=%s', (datetime.datetime.now().timestamp(), elapsed, durationSeconds, rowId))
             db.commit()
             dbCursor.close()
 
@@ -185,7 +189,4 @@ class Detection:
 
 d = Detection(config)
 d.Run()
-
-
-
 
