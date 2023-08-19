@@ -215,8 +215,8 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             // we exceeded the threshold, don't need to process any more batches
             process = false;
 
-            // if motion is detected, check again in 2 seconds
-            detect_at = yuv_frame_counter - 1 + (settings_fps * 2);
+            // if motion is detected, check again in 1 second
+            detect_at = yuv_frame_counter - 1 + settings_fps;
 
             h264_motion_detected();
             pthread_mutex_lock(&motionDetectionMutex);

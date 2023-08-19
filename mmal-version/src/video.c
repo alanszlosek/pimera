@@ -73,6 +73,8 @@ void h264_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         write(video_fd, buffer->data, buffer->length);
         mmal_buffer_header_mem_unlock(buffer);
 
+        //printf("h264_frame_counter: %d. save_until: %d\n", h264_frame_counter, save_until);
+
         // should we still be saving?
         // save up to 1 second past the last time motion was detected
         if (h264_frame_counter < save_until) {
@@ -169,7 +171,9 @@ void h264_config(unsigned int fps, MMAL_QUEUE_T *queue, char* path, size_t h264_
 }
 
 void h264_motion_detected() {
-    save_until = h264_frame_counter + h264_settings_fps;
+    // we check for motion in 1 second, so stop recording after 2
+    save_until = h264_frame_counter + (h264_settings_fps * 2);
+    //printf("h264_frame_counter: %d. Setting save_until: %d\n", h264_frame_counter, save_until);
 
     // would like to set frame/recording cutoffs here instead
 }
