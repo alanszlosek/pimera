@@ -13,6 +13,7 @@ The processing scripts and video browsing UI use Python, MySQL, and JavaScript. 
 * `processing/hosts.txt` - IP addresses of the RasPis to copy videos from.
 * `video-browser/` - The web UI for browsing videos by tag (detected objects) and date. **See screenshot below.** Browsing by tag works, and quick-and-dirty stream browsing does too, but I have a redesign planned to improve UX.
 * `config.json` - Config file that contains MySQL connection info used by `processing/` and `video-browser/` Python code.
+* `cpu-metrics` - Daemon to collect RasPi CPU temperature and usage, and send to StatsD or InfluxDB.
 
 ## Screenshots
 

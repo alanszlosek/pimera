@@ -9,7 +9,9 @@ import sys
 fp = open('../config.json', 'r')
 config = json.load(fp)
 
-print(sys.argv[1])
+#print(sys.argv[1])
+#basePath = sys.argv[1]
+basePath = config['videoPath']
 
 my = mysql.connector.connect(user=config['username'], password=config['password'], host=config['host'], database=config['database'])
 c = my.cursor()
@@ -21,7 +23,7 @@ def iterateOverFiles(root):
             yield os.path.join(dirpath, f_name)
 
 
-for filepath in iterateOverFiles(sys.argv[1]):
+for filepath in iterateOverFiles(basePath):
     if not filepath[-3:] == 'mp4':
         continue
     # is there a device name in the filename?

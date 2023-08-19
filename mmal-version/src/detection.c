@@ -11,6 +11,7 @@
 
 #include "camera.h"
 #include "detection.h"
+#include "video.h"
 
 MOTION_DETECTION_T motionDetection;
 pthread_mutex_t motionDetectionMutex;
@@ -182,7 +183,7 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         ptr = motionDetection.processing.pointers;
         end = clock();
 
-        printf("YUV COPY. Time: %f FPS: %d\n", (double)(end - begin) / CLOCKS_PER_SEC, fps_rate);
+        //printf("YUV COPY. Time: %f FPS: %d\n", (double)(end - begin) / CLOCKS_PER_SEC, fps_rate);
     }
     
     if (process) {
@@ -208,15 +209,16 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
 
         end = clock();
 
-        printf("DETECTION. Pixel delta: %d threshold: %d Time: %f FPS: %d cnt: %d\n", threshold_tally, yuv_threshold, (double)(end - begin) / CLOCKS_PER_SEC, fps_rate, count);
+        //printf("DETECTION. Pixel delta: %d threshold: %d Time: %f FPS: %d cnt: %d\n", threshold_tally, yuv_threshold, (double)(end - begin) / CLOCKS_PER_SEC, fps_rate, count);
 
         if (threshold_tally > yuv_threshold) {
             // we exceeded the threshold, don't need to process any more batches
             process = false;
 
-            // if motion is detected, check again in 2 seconds
-            detect_at = yuv_frame_counter - 1 + (settings_fps * 2);
+            // if motion is detected, check again in 1 second
+            detect_at = yuv_frame_counter - 1 + settings_fps;
 
+            h264_motion_detected();
             pthread_mutex_lock(&motionDetectionMutex);
             motionDetection.motion_count++;
             motionDetection.pixel_delta = threshold_tally;
