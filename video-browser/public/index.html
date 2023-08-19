@@ -132,33 +132,10 @@ div.search input {
     float: right;
 }
 
-.hidden {
+.hidden, #streamsContainer.hidden, #recordingsContainer.hidden {
     display: none;
 }
 
-.push {
-    margin-bottom: 10px;
-}
-
-
-.main {
-    display: grid;
-    grid-template-columns: 50% 50%;
-}
-
-.main video {
-    width: 100%;
-}
-.main > div {
-    border: 1px solid #fff;
-    padding: 2px;
-}
-.main > div.selected {
-    background-color: beige;
-}
-.main div {
-    overflow-wrap:break-word;
-}
 
 #recordings {
     display: grid;
@@ -698,12 +675,10 @@ var handlers = {
     tagsNavButton: {
         click: function() {
             if (tagsModule.visible) {
-                recordings.showPlayer();
-                recordings.showVideos();
+                recordings.show();
                 tagsModule.hide();
             } else {
-                recordings.hidePlayer();
-                recordings.hideVideos();
+                recordings.hide();
                 tagsModule.show();
             }
         }
@@ -749,7 +724,7 @@ var recordings = {
     showTab: function() {
         let self = this;
         recordings.enableButtons();
-        self.handles.container.style.display = 'grid';
+        self.handles.container.classList.remove('hidden');
 
         if (self.tagIds.size == 0) {
             self.tagIds.add('ANY');
@@ -760,20 +735,20 @@ var recordings = {
     },
     show: function() {
         let self = this;
-        self.handles.container.style.display = 'grid';
+        self.handles.container.classList.remove('hidden');
         this.hidden = false;
     },
     hideTab: function() {
         let self = this;
         recordings.disableButtons();
-        self.handles.container.style.display = 'none';
+        self.handles.container.classList.add('hidden');
 
         self.handles.videoPlayer.pause();
         this.hidden = true;
     },
     hide: function() {
         let self = this;
-        self.handles.container.style.display = 'none';
+        self.handles.container.classList.add('hidden');
 
         self.handles.videoPlayer.pause();
         this.hidden = true;
@@ -1185,7 +1160,7 @@ let streams = {
     showTab: function() {
         let self = this;
 
-        self.handles.container.style.display = 'block';
+        self.handles.container.classList.remove('hidden');
 
         let fetchCameras = function() {
             fetch('/api/cameras.json')
@@ -1224,6 +1199,7 @@ let streams = {
     },
     hideTab: function() {
         let self = this;
+        self.handles.container.classList.add('hidden');
         clearInterval( self.intervalHandle );
 
         for (let key in self.cameras) {
