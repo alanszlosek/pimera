@@ -5,9 +5,9 @@ After=network.target
 [Service]
 User=pi
 Group=pi
-WorkingDirectory=/home/pi/pimera
+WorkingDirectory=/home/pi/pimera/mmal-version
 SyslogIdentifier=pimera
-ExecStart=/home/pi/pimera/pimera
+ExecStart=/home/pi/pimera/mmal-version/pimera
 Restart=always
 StandardOutput=file:/var/log/pimera.log
 StandardError=file:/var/log/pimera.log
