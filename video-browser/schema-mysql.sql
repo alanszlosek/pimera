@@ -9,7 +9,8 @@ CREATE TABLE videos (
     deletedAt bigint unsigned not null default 0,
     objectDetectionRanAt bigint unsigned not null default 0,
     objectDetectionRunSeconds int unsigned not null default 0,
-    objectDetectionRan tinyint unsigned not null default 0
+    objectDetectionRan tinyint unsigned not null default 0,
+    durationSeconds int(10) unsigned not null default 0
 );
 CREATE INDEX video_path on videos (path);
 CREATE INDEX video_status on videos (status);
