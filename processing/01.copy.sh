@@ -1,9 +1,11 @@
 #!/bin/bash
+#set -e
+
 HOSTS=$(cat hosts.txt)
 DESTINATION=$1
 
 date
-echo "COPYING THEN REMOVING"
+echo "COPYING TO '${DESTINATION}' THEN REMOVING"
 
 for ip in ${HOSTS}
 do
@@ -14,6 +16,7 @@ do
 	# Clean up from previous run
 	rm -f h264_batch*
 	# If there are files to process
+	# If file exists and is non-empty
 	if [[ -s h264_files.txt ]]; then
 		# Split h264_files.txt into h264_batch01, h264_batch02, etc
 		split -l 1000 --numeric-suffixes ./h264_files.txt h264_batch
@@ -29,7 +32,7 @@ do
 			# Preserve timestamps to prevent duplicate copies if the script
 			# fails for some reason.
 			# Then remove the files rsync copied, but only if rsync succeeds
-			rsync -tv --files-from=${batch} "pi@${ip}:~/h264/" "${DESTINATION}/" && ssh "pi@${ip}" "cd ~/h264; rm "$BATCH_FILES""
+			rsync -tv --files-from=${batch} "pi@${ip}:h264/" "${DESTINATION}/" && ssh "pi@${ip}" "cd ~/h264; rm "$BATCH_FILES""
 		done
 	fi
 
