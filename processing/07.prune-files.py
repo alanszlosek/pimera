@@ -19,7 +19,10 @@ my = mysql.connector.connect(user=config['username'], password=config['password'
 c = my.cursor()
 
 c.execute('select path from videos where status=2')
-for row in c:
+rows = c.fetchall()
+my.close()
+
+for row in rows:
     filepath = os.path.join(basePath, row[0][1:])
     print("Removing %s" % (filepath,))
     try:
@@ -39,4 +42,3 @@ for row in c:
         except Exception as e:
             a = True
 
-my.close()
