@@ -16,7 +16,7 @@ void send_buffers_to_port(MMAL_PORT_T* port, MMAL_QUEUE_T* queue) {
         while ( (new_buffer = mmal_queue_get(queue)) ) {
             status = mmal_port_send_buffer(port, new_buffer);
             if (status != MMAL_SUCCESS) {
-                logError("mmal_port_send_buffer failed, no buffer to return to port\n", __func__);
+                log_error("mmal_port_send_buffer failed, no buffer to return to port\n", __func__);
                 break;
             }
         }
@@ -34,7 +34,7 @@ void cameraControlCallback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
 void destroy_camera(MMAL_COMPONENT_T *camera) {
     if (camera) {
         if (DEBUG) {
-            logInfo("Destroying camera");
+            log_info("Destroying camera");
         }
         mmal_component_destroy(camera);
     }
@@ -63,13 +63,13 @@ MMAL_STATUS_T create_camera(MMAL_COMPONENT_T **camera_handle, SETTINGS *settings
 
     status = mmal_component_create(MMAL_COMPONENT_DEFAULT_CAMERA, &camera);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_component_create failed", __func__);
+        log_error("mmal_component_create failed", __func__);
         return status;
     }
 
     status = mmal_port_enable(camera->control, cameraControlCallback);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_port_enable failed", __func__);
+        log_error("mmal_port_enable failed", __func__);
         destroyComponent(settings, camera, "camera");
         return status;
     }
@@ -94,7 +94,7 @@ MMAL_STATUS_T create_camera(MMAL_COMPONENT_T **camera_handle, SETTINGS *settings
     // Sensor mode 0 for auto
     status = mmal_port_parameter_set_uint32(camera->control, MMAL_PARAMETER_CAMERA_CUSTOM_SENSOR_CONFIG, 0);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_port_parameter_set_uint32 failed to set sensor config to 0", __func__);
+        log_error("mmal_port_parameter_set_uint32 failed to set sensor config to 0", __func__);
         //destroyComponent(settings, camera, "camera");
         destroy_camera(camera);
         return status;
@@ -149,7 +149,7 @@ MMAL_STATUS_T create_camera(MMAL_COMPONENT_T **camera_handle, SETTINGS *settings
     /*
     status = mmal_port_parameter_set_boolean(video_port, MMAL_PARAMETER_VIDEO_INTERPOLATE_TIMESTAMPS, 1);
     if (status) {
-        logError("Failed to enable timestamp interpolation", __func__);
+        log_error("Failed to enable timestamp interpolation", __func__);
     }
     */
 
@@ -170,14 +170,14 @@ MMAL_STATUS_T create_camera(MMAL_COMPONENT_T **camera_handle, SETTINGS *settings
 
     status = mmal_port_format_commit(video_port);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_port_format_commit failed\n", __func__);
+        log_error("mmal_port_format_commit failed\n", __func__);
         destroyComponent(settings, camera, "camera");
         return status;
     }
 
     status = mmal_component_enable(camera);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_component_enable failed", __func__);
+        log_error("mmal_component_enable failed", __func__);
         destroyComponent(settings, camera, "camera");
         return status;
     }
@@ -189,7 +189,7 @@ MMAL_STATUS_T create_camera(MMAL_COMPONENT_T **camera_handle, SETTINGS *settings
 
     status = mmal_port_parameter_set(camera->control, &change_event_request.hdr);
     if (status != MMAL_SUCCESS) {
-        logError("Failed to set camera settings", __func__);
+        log_error("Failed to set camera settings", __func__);
     }
     */
 
@@ -197,7 +197,7 @@ MMAL_STATUS_T create_camera(MMAL_COMPONENT_T **camera_handle, SETTINGS *settings
 
 
     if (DEBUG) {
-        logInfo("Camera created");
+        log_info("Camera created");
     }
 
     return status;
@@ -215,7 +215,7 @@ MMAL_STATUS_T create_splitter(MMAL_COMPONENT_T **splitter_handle, MMAL_CONNECTIO
 
     status = mmal_component_create(MMAL_COMPONENT_DEFAULT_VIDEO_SPLITTER, &splitter);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_component_create failed for splitter", __func__);
+        log_error("mmal_component_create failed for splitter", __func__);
         return status;
     }
 
@@ -224,7 +224,7 @@ MMAL_STATUS_T create_splitter(MMAL_COMPONENT_T **splitter_handle, MMAL_CONNECTIO
 
     status = mmal_port_format_commit(splitter->input[0]);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_port_format_commit failed on splitter input", __func__);
+        log_error("mmal_port_format_commit failed on splitter input", __func__);
         mmal_component_destroy(splitter);
         return status;
     }
@@ -236,7 +236,7 @@ MMAL_STATUS_T create_splitter(MMAL_COMPONENT_T **splitter_handle, MMAL_CONNECTIO
 
         status = mmal_port_format_commit(splitter->output[i]);
         if (status != MMAL_SUCCESS) {
-            logError("mmal_port_format_commit failed on a splitter output", __func__);
+            log_error("mmal_port_format_commit failed on a splitter output", __func__);
             mmal_component_destroy(splitter);
             return status;
         }
@@ -244,18 +244,18 @@ MMAL_STATUS_T create_splitter(MMAL_COMPONENT_T **splitter_handle, MMAL_CONNECTIO
 
     status = mmal_component_enable(splitter);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_component_enable failed on splitter", __func__);
+        log_error("mmal_component_enable failed on splitter", __func__);
         mmal_component_destroy(splitter);
         return status;
     }
 
     *splitter_handle = splitter;
     if (DEBUG) {
-        logInfo("Splitter created");
+        log_info("Splitter created");
     }
 
     if (DEBUG) {
-        logInfo("Connecting specified port to splitter input port");
+        log_info("Connecting specified port to splitter input port");
     }
 
     status = mmal_connection_create(
@@ -267,7 +267,7 @@ MMAL_STATUS_T create_splitter(MMAL_COMPONENT_T **splitter_handle, MMAL_CONNECTIO
     );
     if (status != MMAL_SUCCESS) {
         *connection_handle = NULL;
-        logError("connectEnable failed for specified port to splitter input", __func__);
+        log_error("connectEnable failed for specified port to splitter input", __func__);
         mmal_component_destroy(splitter);
         return EX_ERROR;
     }
@@ -284,7 +284,7 @@ MMAL_STATUS_T create_splitter(MMAL_COMPONENT_T **splitter_handle, MMAL_CONNECTIO
 void destroy_splitter(MMAL_COMPONENT_T *splitter, MMAL_CONNECTION_T *connection) {
     if (connection) {
         if (DEBUG) {
-            logInfo("Destroying splitter connection");
+            log_info("Destroying splitter connection");
         }
     }
     mmal_connection_destroy(connection);
@@ -292,7 +292,7 @@ void destroy_splitter(MMAL_COMPONENT_T *splitter, MMAL_CONNECTION_T *connection)
 
     if (splitter) {
         if (DEBUG) {
-            logInfo("Destroying splitter");
+            log_info("Destroying splitter");
         }
         mmal_component_destroy(splitter);
     }
@@ -312,7 +312,7 @@ MMAL_STATUS_T create_resizer(MMAL_COMPONENT_T **handle, MMAL_CONNECTION_T **conn
 
     status = mmal_component_create("vc.ril.isp", &resizer);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_component_create failed for resizer", __func__);
+        log_error("mmal_component_create failed for resizer", __func__);
         return status;
     }
 
@@ -321,7 +321,7 @@ MMAL_STATUS_T create_resizer(MMAL_COMPONENT_T **handle, MMAL_CONNECTION_T **conn
 
     status = mmal_port_format_commit(resizer->input[0]);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_port_format_commit failed on resizer input", __func__);
+        log_error("mmal_port_format_commit failed on resizer input", __func__);
         mmal_component_destroy(resizer);
         return status;
     }
@@ -342,21 +342,21 @@ MMAL_STATUS_T create_resizer(MMAL_COMPONENT_T **handle, MMAL_CONNECTION_T **conn
 
     status = mmal_port_format_commit(resizer->output[0]);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_port_format_commit failed on resizer output port", __func__);
+        log_error("mmal_port_format_commit failed on resizer output port", __func__);
         mmal_component_destroy(resizer);
         return status;
     }
 
     status = mmal_component_enable(resizer);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_component_enable failed on resizer", __func__);
+        log_error("mmal_component_enable failed on resizer", __func__);
         mmal_component_destroy(resizer);
         return status;
     }
 
 
     if (DEBUG) {
-        logInfo("Connecting splitter YUV port to resizer input port");
+        log_info("Connecting splitter YUV port to resizer input port");
     }
 
     status = mmal_connection_create(
@@ -367,7 +367,7 @@ MMAL_STATUS_T create_resizer(MMAL_COMPONENT_T **handle, MMAL_CONNECTION_T **conn
     );
     if (status != MMAL_SUCCESS) {
         *connection_handle = NULL;
-        logError("connectEnable failed for splitter YUV to resizer", __func__);
+        log_error("connectEnable failed for splitter YUV to resizer", __func__);
         mmal_component_destroy(resizer);
         return EX_ERROR;
     }
@@ -380,7 +380,7 @@ MMAL_STATUS_T create_resizer(MMAL_COMPONENT_T **handle, MMAL_CONNECTION_T **conn
 
     *handle = resizer;
     if (DEBUG) {
-        logInfo("Resizer created");
+        log_info("Resizer created");
     }
     return status;
 }
@@ -388,7 +388,7 @@ MMAL_STATUS_T create_resizer(MMAL_COMPONENT_T **handle, MMAL_CONNECTION_T **conn
 void destroy_resizer(MMAL_COMPONENT_T *splitter, MMAL_CONNECTION_T *connection) {
     if (connection) {
         if (DEBUG) {
-            logInfo("Destroying resizer connection");
+            log_info("Destroying resizer connection");
         }
     }
     mmal_connection_destroy(connection);
@@ -396,7 +396,7 @@ void destroy_resizer(MMAL_COMPONENT_T *splitter, MMAL_CONNECTION_T *connection) 
 
     if (splitter) {
         if (DEBUG) {
-            logInfo("Destroying resizer");
+            log_info("Destroying resizer");
         }
         mmal_component_destroy(splitter);
     }
@@ -412,14 +412,14 @@ void destroy_mjpeg_encoder(MMAL_COMPONENT_T *component, MMAL_CONNECTION_T *conne
     // Get rid of any port buffers first
     if (pool) {
         if (DEBUG) {
-            logInfo("Destroying mjpeg encoder pool");
+            log_info("Destroying mjpeg encoder pool");
         }
         mmal_port_pool_destroy(component->output[0], pool);
     }
 
     if (component) {
         if (DEBUG) {
-            logInfo("Destroying mjpeg encoder component");
+            log_info("Destroying mjpeg encoder component");
         }
         mmal_component_destroy(component);
     }
@@ -434,7 +434,7 @@ MMAL_STATUS_T create_mjpeg_encoder(MMAL_COMPONENT_T **handle, MMAL_POOL_T **pool
     status = mmal_component_create(MMAL_COMPONENT_DEFAULT_VIDEO_ENCODER, &encoder);
 
     if (status != MMAL_SUCCESS) {
-        logError("mmal_component_create failed for mjpeg encoder", __func__);
+        log_error("mmal_component_create failed for mjpeg encoder", __func__);
         return status;
     }
 
@@ -456,7 +456,7 @@ MMAL_STATUS_T create_mjpeg_encoder(MMAL_COMPONENT_T **handle, MMAL_POOL_T **pool
 
     status = mmal_port_format_commit(encoder_output);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_port_format_commit failed on mjpeg encoder output port", __func__);
+        log_error("mmal_port_format_commit failed on mjpeg encoder output port", __func__);
         mmal_component_destroy(encoder);
         return status;
     }
@@ -469,7 +469,7 @@ MMAL_STATUS_T create_mjpeg_encoder(MMAL_COMPONENT_T **handle, MMAL_POOL_T **pool
 
     status = mmal_component_enable(encoder);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_component_enable failed on mjpeg encoder", __func__);
+        log_error("mmal_component_enable failed on mjpeg encoder", __func__);
         mmal_component_destroy(encoder);
         return status;
     }
@@ -481,23 +481,23 @@ MMAL_STATUS_T create_mjpeg_encoder(MMAL_COMPONENT_T **handle, MMAL_POOL_T **pool
         MMAL_CONNECTION_FLAG_TUNNELLING | MMAL_CONNECTION_FLAG_ALLOCATION_ON_INPUT
     );
     if (status != MMAL_SUCCESS) {
-        logInfo("Failed to create connection to mjpeg encoder", __func__);
+        log_info("Failed to create connection to mjpeg encoder", __func__);
         return status;
     }
 
     status = mmal_connection_enable(*connection_handle);
     if (status != MMAL_SUCCESS) {
-        logError("Failed to enable connection to mjpeg encoder", __func__);
+        log_error("Failed to enable connection to mjpeg encoder", __func__);
         return EX_ERROR;
     }
 
     if (DEBUG) {
-        logInfo("Enabling mjpeg encoder output port");
+        log_info("Enabling mjpeg encoder output port");
     }
 
     status = mmal_port_enable(encoder_output, callback);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_port_enable failed for mjpeg encoder output", __func__);
+        log_error("mmal_port_enable failed for mjpeg encoder output", __func__);
         destroy_mjpeg_encoder(encoder, *connection_handle, pool);
         return EX_ERROR;
     }
@@ -508,7 +508,7 @@ MMAL_STATUS_T create_mjpeg_encoder(MMAL_COMPONENT_T **handle, MMAL_POOL_T **pool
     // TODO: we probably don't need a pool. can likely get by with 1 buffer
     pool = mmal_port_pool_create(encoder_output, encoder_output->buffer_num, encoder_output->buffer_size);
     if (!pool) {
-        logError("mmal_port_pool_create failed for mjpeg encoder output", __func__);
+        log_error("mmal_port_pool_create failed for mjpeg encoder output", __func__);
         // TODO: what error code for this?
         return MMAL_ENOMEM;
     }
@@ -517,7 +517,7 @@ MMAL_STATUS_T create_mjpeg_encoder(MMAL_COMPONENT_T **handle, MMAL_POOL_T **pool
     *pool_handle = pool;
 
     if (DEBUG) {
-        logInfo("Created MJPEG encoder");
+        log_info("Created MJPEG encoder");
     }
 
     return status;
@@ -533,14 +533,14 @@ void destroy_h264_encoder(MMAL_COMPONENT_T *component, MMAL_CONNECTION_T *connec
     // Get rid of any port buffers first
     if (pool) {
         if (DEBUG) {
-            logInfo("Destroying h264 encoder pool");
+            log_info("Destroying h264 encoder pool");
         }
         mmal_port_pool_destroy(component->output[0], pool);
     }
 
     if (component) {
         if (DEBUG) {
-            logInfo("Destroying h264 encoder component");
+            log_info("Destroying h264 encoder component");
         }
         mmal_component_destroy(component);
     }
@@ -554,13 +554,13 @@ MMAL_STATUS_T create_h264_encoder(MMAL_COMPONENT_T **handle, MMAL_POOL_T **pool_
 
     status = mmal_component_create(MMAL_COMPONENT_DEFAULT_VIDEO_ENCODER, &encoder);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_component_create failed for h264 encoder", __func__);
+        log_error("mmal_component_create failed for h264 encoder", __func__);
         return status;
     }
 
     // TODO: do i really need this?
     if (!encoder->input_num || !encoder->output_num) {
-        logError("Expected h264 encoder to have input/output ports", __func__);
+        log_error("Expected h264 encoder to have input/output ports", __func__);
         return MMAL_ENOSYS;
     }
 
@@ -587,7 +587,7 @@ MMAL_STATUS_T create_h264_encoder(MMAL_COMPONENT_T **handle, MMAL_POOL_T **pool_
 
     status = mmal_port_format_commit(encoder_output);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_port_format_commit failed on h264 encoder output port", __func__);
+        log_error("mmal_port_format_commit failed on h264 encoder output port", __func__);
         mmal_component_destroy(encoder);
         return status;
     }
@@ -595,7 +595,7 @@ MMAL_STATUS_T create_h264_encoder(MMAL_COMPONENT_T **handle, MMAL_POOL_T **pool_
     /*
     encoder_output->buffer_size = encoder_output->buffer_size_recommended;
     if (encoder_output->buffer_size < encoder_output->buffer_size_min) {
-        logInfo("Adjusting buffer_size");
+        log_info("Adjusting buffer_size");
         encoder_output->buffer_size = encoder_output->buffer_size_min;
     }
 
@@ -603,7 +603,7 @@ MMAL_STATUS_T create_h264_encoder(MMAL_COMPONENT_T **handle, MMAL_POOL_T **pool_
     // TODO: raise this once we get queue set up
     encoder_output->buffer_num = encoder_output->buffer_num_recommended;
     if (encoder_output->buffer_num < encoder_output->buffer_num_min) {
-        logInfo("Adjusting buffer_num");
+        log_info("Adjusting buffer_num");
         encoder_output->buffer_num = encoder_output->buffer_num_min;
     }
     */
@@ -624,13 +624,13 @@ MMAL_STATUS_T create_h264_encoder(MMAL_COMPONENT_T **handle, MMAL_POOL_T **pool_
     intraperiod.value = settings->fps;
     status = mmal_port_parameter_set(encoder_output, &intraperiod.hdr);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_port_parameter_set failed on h264 encoder", __func__);
+        log_error("mmal_port_parameter_set failed on h264 encoder", __func__);
         // who cares?
     }
 
     status = mmal_port_parameter_set_boolean(encoder_output, MMAL_PARAMETER_VIDEO_ENCODE_SPS_TIMING, true);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_port_parameter_set_boolean failed to set SPS timing on h264 encoder", __func__);
+        log_error("mmal_port_parameter_set_boolean failed to set SPS timing on h264 encoder", __func__);
     }
 
 
@@ -643,12 +643,12 @@ MMAL_STATUS_T create_h264_encoder(MMAL_COMPONENT_T **handle, MMAL_POOL_T **pool_
 
     /*
     if((VCOS_ALIGN_UP(settings->width,16) >> 4) * (VCOS_ALIGN_UP(settings->height,16) >> 4) * settings->h264.fps > 245760) {
-        logInfo("Here");
+        log_info("Here");
         if((VCOS_ALIGN_UP(settings->width,16) >> 4) * (VCOS_ALIGN_UP(settings->height,16) >> 4) * settings->h264.fps <= 522240) {
-            logInfo("Too many macroblocks/s: Increasing H264 Level to 4.2\n");
+            log_info("Too many macroblocks/s: Increasing H264 Level to 4.2\n");
             video_profile.profile[0].level = MMAL_VIDEO_LEVEL_H264_42;
         } else {
-            logError("Too many macroblocks/s requested, bailing", __func__);
+            log_error("Too many macroblocks/s requested, bailing", __func__);
             mmal_component_destroy(encoder);
             return MMAL_EINVAL;
         }
@@ -657,21 +657,21 @@ MMAL_STATUS_T create_h264_encoder(MMAL_COMPONENT_T **handle, MMAL_POOL_T **pool_
     
     status = mmal_port_parameter_set(encoder_output, &video_profile.hdr);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_port_parameter_set failed on h264 encoder output port profile", __func__);
+        log_error("mmal_port_parameter_set failed on h264 encoder output port profile", __func__);
         mmal_component_destroy(encoder);
         return status;
     }
 
     status = mmal_component_enable(encoder);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_component_enable failed on h264 encoder", __func__);
+        log_error("mmal_component_enable failed on h264 encoder", __func__);
         mmal_component_destroy(encoder);
         return status;
     }
 
 
     if (DEBUG) {
-        logInfo("Connecting splitter h264 port to h264 encoder input port");
+        log_info("Connecting splitter h264 port to h264 encoder input port");
     }
 
     status = mmal_connection_create(
@@ -681,30 +681,30 @@ MMAL_STATUS_T create_h264_encoder(MMAL_COMPONENT_T **handle, MMAL_POOL_T **pool_
         MMAL_CONNECTION_FLAG_TUNNELLING | MMAL_CONNECTION_FLAG_ALLOCATION_ON_INPUT
     );
     if (status != MMAL_SUCCESS) {
-        logInfo("Failed to create connection to h264 encoder", __func__);
+        log_info("Failed to create connection to h264 encoder", __func__);
         return status;
     }
 
     status = mmal_connection_enable(*connection_handle);
     if (status != MMAL_SUCCESS) {
-        logError("Failed to enable connection to h264 encoder", __func__);
+        log_error("Failed to enable connection to h264 encoder", __func__);
         return EX_ERROR;
     }
 
     if (DEBUG) {
-        logInfo("Enabling h264 encoder output port");
+        log_info("Enabling h264 encoder output port");
     }
 
     status = mmal_port_enable(encoder_output, callback);
     if (status != MMAL_SUCCESS) {
-        logError("mmal_port_enable failed for h264 encoder output", __func__);
+        log_error("mmal_port_enable failed for h264 encoder output", __func__);
         destroy_h264_encoder(encoder, *connection_handle, pool);
         return EX_ERROR;
     }
 
     pool = mmal_port_pool_create(encoder_output, encoder_output->buffer_num, encoder_output->buffer_size);
     if (!pool) {
-        logError("mmal_port_pool_create failed for h264 encoder output", __func__);
+        log_error("mmal_port_pool_create failed for h264 encoder output", __func__);
         // TODO: what error code for this?
         return MMAL_ENOMEM;
     }
@@ -714,7 +714,7 @@ MMAL_STATUS_T create_h264_encoder(MMAL_COMPONENT_T **handle, MMAL_POOL_T **pool_
     *pool_handle = pool;
 
     if (DEBUG) {
-        logInfo("Created H264 encoder");
+        log_info("Created H264 encoder");
     }
 
     return status;

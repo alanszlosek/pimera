@@ -27,7 +27,7 @@ void mjpeg_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
 
     mjpeg_frame_counter++;
     if (mjpeg_frame_counter >= stream_threshold) {
-        stream_threshold = mjpeg_frame_counter + motionDetection.stream_sleep;
+        stream_threshold = mjpeg_frame_counter + motion_detection.stream_sleep;
 
         // TODO: put connection lists in a circular buffer of linked lists
         // so clients can control their framerate by passing param with HTTP req
@@ -40,9 +40,9 @@ void mjpeg_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             mmal_buffer_header_mem_lock(buffer);
             while (connection) {
                 // bail when fail to write
-                sendSocket(connection->fd, motionDetection.boundary, motionDetection.boundaryLength) && 
-                sendSocket(connection->fd, contentLength, contentLengthLength) && 
-                sendSocket(connection->fd, (char*)buffer->data, buffer->length);
+                socket_send(connection->fd, motion_detection.boundary, motion_detection.boundary_length) && 
+                socket_send(connection->fd, contentLength, contentLengthLength) && 
+                socket_send(connection->fd, (char*)buffer->data, buffer->length);
                 connection = connection->next;
             }
             mmal_buffer_header_mem_unlock(buffer);

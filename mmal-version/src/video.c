@@ -15,7 +15,7 @@ char video_file_temp[256];
 char video_file_final[256];
 int video_fd;
 char h264_file_kickoff[128];
-uint32_t h264_file_kickoffLength;
+uint32_t h264_file_kickoff_length;
 bool saving = false;
 unsigned int h264_frame_counter = 0;
 unsigned int save_until = 0;
@@ -52,14 +52,14 @@ void h264_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
 
 
     if (buffer->flags & MMAL_BUFFER_HEADER_FLAG_CONFIG) {
-        logInfo("Keeping h264 config data for later");
+        log_info("Keeping h264 config data for later");
 
         if (buffer->length > 128) {
-            logError("Not enough space in h264_file_kickoff", __func__);
+            log_error("Not enough space in h264_file_kickoff", __func__);
         } else {
             mmal_buffer_header_mem_lock(buffer);
             memcpy(h264_file_kickoff, buffer->data, buffer->length);
-            h264_file_kickoffLength = buffer->length;
+            h264_file_kickoff_length = buffer->length;
             mmal_buffer_header_mem_unlock(buffer);
         }
         mmal_buffer_header_release(buffer);
@@ -87,7 +87,7 @@ void h264_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             // TODO: do i need to wait for a certain type of data before closing?
 
             // save then close
-            logInfo("CLOSING %s\n", video_file_temp);
+            log_info("CLOSING %s\n", video_file_temp);
             close(video_fd);
             video_fd = 0;
 
@@ -129,11 +129,11 @@ void h264_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             strcat(video_file_temp, "_h264");
             strcat(video_file_final, "h264");
 
-            logInfo("OPENING %s\n", video_file_temp);
+            log_info("OPENING %s\n", video_file_temp);
 
             // TODO: handle failed open
             video_fd = open(video_file_temp, O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
-            write(video_fd, h264_file_kickoff, h264_file_kickoffLength);
+            write(video_fd, h264_file_kickoff, h264_file_kickoff_length);
 
             write(video_fd, h264_buffer, h264_buffer_length);
             h264_buffer_length = 0;
@@ -165,7 +165,7 @@ void h264_config(unsigned int fps, MMAL_QUEUE_T *queue, char* path, size_t h264_
 
     h264_buffer = (uint8_t*) malloc(h264_buffer_size);
     if (!h264_buffer) {
-        logError("FAILED TO ALLOCATE H264 BUFFER", __func__);
+        log_error("FAILED TO ALLOCATE H264 BUFFER", __func__);
         // OF SIZE %u\n", h264_buffer_size);
     }
 }

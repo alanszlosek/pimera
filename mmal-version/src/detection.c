@@ -13,15 +13,15 @@
 #include "detection.h"
 #include "video.h"
 
-MOTION_DETECTION_T motionDetection;
-pthread_mutex_t motionDetectionMutex;
+MOTION_DETECTION_T motion_detection;
+pthread_mutex_t motion_detection_mutex;
 
 // local variables to reduce need to dereference into settings struct
 unsigned int settings_buffer_length;
 unsigned int settings_fps;
 MMAL_QUEUE_T *yuv_queue;
 
-// we take abs of pixels between previousFrame and currentFrame
+// we take abs of pixels between previous_frame and current_frame
 // but consider 40 of that to be noise
 // if it's above 40 we consider that pixel as having changed
 unsigned int threshold_tally;
@@ -38,7 +38,7 @@ unsigned int yuv_frame_counter = 0;
 unsigned int detect_at = 1; // next frame number to test for motion
 
 // globals to help iterate over pixel rows
-uint8_t** ptr; // pointer to motionDetection.processing.pointers
+uint8_t** ptr; // pointer to motion_detection.processing.pointers
 unsigned int rows_processed;
 
 // frame rate calculation variables
@@ -157,9 +157,9 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     // TODO: refactor this without locking
     // perhaps increment local counter and compare buffer timestamp
     /*
-    pthread_mutex_lock(&statsMutex);
+    pthread_mutex_lock(&stats_mutex);
     stats.fps++;
-    pthread_mutex_unlock(&statsMutex);
+    pthread_mutex_unlock(&stats_mutex);
     */
 
     clock_t begin, end;
@@ -168,7 +168,7 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         begin = clock();
 
         mmal_buffer_header_mem_lock(buffer);
-        memcpy(motionDetection.currentFrame, buffer->data, settings_buffer_length);
+        memcpy(motion_detection.current_frame, buffer->data, settings_buffer_length);
         mmal_buffer_header_mem_unlock(buffer);
 
         // just copy, then bail
@@ -176,11 +176,11 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         process = true;
 
         // schedule next detection
-        detect_at = yuv_frame_counter + motionDetection.detection_sleep;
+        detect_at = yuv_frame_counter + motion_detection.detection_sleep;
 
         // reset pointers
         rows_processed = 0;
-        ptr = motionDetection.processing.pointers;
+        ptr = motion_detection.processing.pointers;
         end = clock();
 
         //printf("YUV COPY. Time: %f FPS: %d\n", (double)(end - begin) / CLOCKS_PER_SEC, fps_rate);
@@ -219,20 +219,20 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             detect_at = yuv_frame_counter - 1 + settings_fps;
 
             h264_motion_detected();
-            pthread_mutex_lock(&motionDetectionMutex);
-            motionDetection.motion_count++;
-            motionDetection.pixel_delta = threshold_tally;
-            pthread_mutex_unlock(&motionDetectionMutex);
+            pthread_mutex_lock(&motion_detection_mutex);
+            motion_detection.motion_count++;
+            motion_detection.pixel_delta = threshold_tally;
+            pthread_mutex_unlock(&motion_detection_mutex);
             // only copy if motion detected ....
             // this lets us detect slow moving items
-            memcpy(motionDetection.previousFrame, motionDetection.currentFrame, settings_buffer_length);
+            memcpy(motion_detection.previous_frame, motion_detection.current_frame, settings_buffer_length);
 
         } else {
-            pthread_mutex_lock(&motionDetectionMutex);
-            motionDetection.motion_count = 0;
-            motionDetection.pixel_delta = threshold_tally;
+            pthread_mutex_lock(&motion_detection_mutex);
+            motion_detection.motion_count = 0;
+            motion_detection.pixel_delta = threshold_tally;
             // next detection is already scheduled so no need to update detect_at here
-            pthread_mutex_unlock(&motionDetectionMutex);
+            pthread_mutex_unlock(&motion_detection_mutex);
         }
 
     }
@@ -245,6 +245,7 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
 void detection_config(unsigned int fps, unsigned int y_length, MMAL_QUEUE_T* queue) {
     settings_fps = fps;
     settings_buffer_length = y_length;
+    // TODO: realloc current_frame and previous_frame buffers here
     yuv_queue = queue;
 }
 void detection_threshold(unsigned int threshold) {

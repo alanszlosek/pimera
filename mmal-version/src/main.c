@@ -63,10 +63,10 @@ typedef struct {
     uint8_t fps;
 } STATS_T;
 STATS_T stats;
-pthread_mutex_t statsMutex;
+pthread_mutex_t stats_mutex;
 
 
-void reconfigureRegion(SETTINGS* settings) {
+void region_reconfigure(SETTINGS* settings) {
     unsigned int x_start, x_end, y_start, y_end;
     unsigned int stride = settings->mjpeg.vcosWidth;
     unsigned int rows;
@@ -80,23 +80,23 @@ void reconfigureRegion(SETTINGS* settings) {
 
     printf("New detection region: %d, %d, %d, %d\n", x_start, y_start, x_end, y_end);
 
-    if (motionDetection.processing.pointers) {
-        free(motionDetection.processing.pointers);
-        motionDetection.processing.pointers = NULL;
+    if (motion_detection.processing.pointers) {
+        free(motion_detection.processing.pointers);
+        motion_detection.processing.pointers = NULL;
     }
 
-    motionDetection.processing.pointers = (uint8_t**) malloc(
+    motion_detection.processing.pointers = (uint8_t**) malloc(
         // start c, end c, start p
         (sizeof(uint8_t*) * rows * 3)
         +
         // NULL separators between each batch of pointers
-        (sizeof(uint8_t*) * motionDetection.processing.batches * 3)
+        (sizeof(uint8_t*) * motion_detection.processing.batches * 3)
         +
         // NULL terminators
         (sizeof(uint8_t*) * 9)
     );
 
-    unsigned int rows_per_batch = rows / motionDetection.processing.batches;
+    unsigned int rows_per_batch = rows / motion_detection.processing.batches;
     unsigned int offset = (y_start * stride) + x_start;
     unsigned int i = 0;
     unsigned int j;
@@ -113,51 +113,51 @@ void reconfigureRegion(SETTINGS* settings) {
         unsigned int row_offset = offset + (stride * row);
         j = i;
         // pointer to start of row in current
-        motionDetection.processing.pointers[i++] = 
-            motionDetection.currentFrame + row_offset;
+        motion_detection.processing.pointers[i++] = 
+            motion_detection.current_frame + row_offset;
 
         // pointer to end of that row in current
-        motionDetection.processing.pointers[i++] = motionDetection.processing.pointers[j] + row_length;
+        motion_detection.processing.pointers[i++] = motion_detection.processing.pointers[j] + row_length;
 
         // pointer to start of corresponding row in previous
-        motionDetection.processing.pointers[i++] = 
-            motionDetection.previousFrame + row_offset;
+        motion_detection.processing.pointers[i++] = 
+            motion_detection.previous_frame + row_offset;
         // TODO: verify this is right
         if ((row+1) % rows_per_batch == 0) {
-            motionDetection.processing.pointers[i++] = NULL;
-            motionDetection.processing.pointers[i++] = NULL;
-            motionDetection.processing.pointers[i++] = NULL;
+            motion_detection.processing.pointers[i++] = NULL;
+            motion_detection.processing.pointers[i++] = NULL;
+            motion_detection.processing.pointers[i++] = NULL;
         }
     }
-    motionDetection.processing.pointers[i++] = NULL;
-    motionDetection.processing.pointers[i++] = NULL;
-    motionDetection.processing.pointers[i++] = NULL;
+    motion_detection.processing.pointers[i++] = NULL;
+    motion_detection.processing.pointers[i++] = NULL;
+    motion_detection.processing.pointers[i++] = NULL;
 
     // OLD
     /*
-    motionDetection.region.offset = (y_start * stride) + x_start;
-    motionDetection.region.num_rows = y_end - y_start;
+    motion_detection.region.offset = (y_start * stride) + x_start;
+    motion_detection.region.num_rows = y_end - y_start;
     // Split detection into batches so we finish just before the next detection frame
-    motionDetection.region.batches = motionDetection.detection_sleep - 1;
-    motionDetection.region.row_batch_size = motionDetection.region.num_rows / motionDetection.region.batches;
-    motionDetection.region.row_length = x_end - x_start;
-    motionDetection.region.stride = stride;
+    motion_detection.region.batches = motion_detection.detection_sleep - 1;
+    motion_detection.region.row_batch_size = motion_detection.region.num_rows / motion_detection.region.batches;
+    motion_detection.region.row_length = x_end - x_start;
+    motion_detection.region.stride = stride;
     */
 }
-void initDetection(SETTINGS* settings) {
-    motionDetection.detection_sleep = settings->h264.fps / settings->motion_check_frequency;
+void detection_init(SETTINGS* settings) {
+    motion_detection.detection_sleep = settings->h264.fps / settings->motion_check_frequency;
 
-    motionDetection.processing.batches = motionDetection.detection_sleep;
+    motion_detection.processing.batches = motion_detection.detection_sleep;
 
-    motionDetection.stream_sleep = settings->h264.fps / 3;
+    motion_detection.stream_sleep = settings->h264.fps / settings->mjpeg.fps;
 
-    motionDetection.previousFrame = (uint8_t*) malloc( settings->mjpeg.y_length );
-    motionDetection.currentFrame = (uint8_t*) malloc( settings->mjpeg.y_length );
+    motion_detection.previous_frame = (uint8_t*) malloc( settings->mjpeg.y_length );
+    motion_detection.current_frame = (uint8_t*) malloc( settings->mjpeg.y_length );
 
-    motionDetection.motion_count = 0;
+    motion_detection.motion_count = 0;
 
-    strncpy(motionDetection.boundary, "--HATCHA\r\nContent-Type: image/jpeg\r\nContent-length: ", 80);
-    motionDetection.boundaryLength = strlen(motionDetection.boundary);
+    strncpy(motion_detection.boundary, "--HATCHA\r\nContent-Type: image/jpeg\r\nContent-length: ", 80);
+    motion_detection.boundary_length = strlen(motion_detection.boundary);
 
     /*
     int start_x = 100;
@@ -168,16 +168,16 @@ void initDetection(SETTINGS* settings) {
     int end_x = start_x + width;
     */
 
-    motionDetection.processing.pointers = NULL;
-    reconfigureRegion(settings);
+    motion_detection.processing.pointers = NULL;
+    region_reconfigure(settings);
 }
 
-void freeDetection() {
-    free(motionDetection.previousFrame);
-    free(motionDetection.currentFrame);
+void detection_free() {
+    free(motion_detection.previous_frame);
+    free(motion_detection.current_frame);
 }
 
-void setDefaultSettings(SETTINGS* settings) {
+void set_default_settings(SETTINGS* settings) {
     char* c;
 
     settings->streamDenominator = 3;
@@ -212,6 +212,7 @@ void setDefaultSettings(SETTINGS* settings) {
     settings->mjpeg.vcosWidth = ALIGN_UP(settings->mjpeg.width, 32);
     settings->mjpeg.vcosHeight = ALIGN_UP(settings->mjpeg.height, 16);
     settings->mjpeg.y_length = settings->mjpeg.vcosWidth * settings->mjpeg.vcosHeight * 1.5;
+    settings->mjpeg.fps = 4;
 
     // TODO: rename this
     settings->motion_check_frequency = 3;
@@ -270,29 +271,33 @@ void setDefaultSettings(SETTINGS* settings) {
 
     // get hostname
     if (gethostname(settings->hostname, sizeof(settings->hostname)) != 0) {
-        logError("Failed to gethostname", __func__);
+        log_error("Failed to gethostname", __func__);
         snprintf(settings->hostname, sizeof(settings->hostname), "INVALID");
     }
 
     // video path
     snprintf(settings->videoPath, 100, "");
 
-    // TODO: handle this in readSettings()
+    // TODO: handle this in read_settings()
     /*
     settings->mjpeg.width = 640;
     settings->mjpeg.height = 480;
     */
-    
+
+    settings->heartbeat_host[0] = 0;
+    settings->heartbeat_port[0] = 0;
+    settings->metrics_host[0] = 0;
+    settings->metrics_port[0] = 0;
     
     c = getenv("DEBUG");
     if (c) {
-        logInfo("Enabling debug");
+        log_info("Enabling debug");
         settings->debug = true;
     }
 
 }
 
-void readSettings(SETTINGS* settings) {
+void read_settings(SETTINGS* settings) {
     FILE* fp = fopen("settings.ini", "r");
     if (fp == NULL) {
         // no settings
@@ -303,7 +308,7 @@ void readSettings(SETTINGS* settings) {
     fseek(fp, 0, SEEK_SET);
     char* data = (char*) malloc(size + 1);
     if (!data) {
-        logError("Failed to allocate data to read settings.ini. Bailing\n", __func__);
+        log_error("Failed to allocate data to read settings.ini. Bailing\n", __func__);
         return;
     }
     fread(data, 1, size, fp);
@@ -347,13 +352,18 @@ void readSettings(SETTINGS* settings) {
         value = ini_property_value(ini, INI_GLOBAL_SECTION, i);
         settings->h264.fps = atoi(value);
     }
-    i = ini_find_property(ini, INI_GLOBAL_SECTION, "videoPath", 9);
+    i = ini_find_property(ini, INI_GLOBAL_SECTION, "stream_fps", 10);
+    if (i != INI_NOT_FOUND) {
+        value = ini_property_value(ini, INI_GLOBAL_SECTION, i);
+        settings->mjpeg.fps = atoi(value);
+    }
+    i = ini_find_property(ini, INI_GLOBAL_SECTION, "video_path", 10);
     if (i != INI_NOT_FOUND) {
         value = ini_property_value(ini, INI_GLOBAL_SECTION, i);
         strncpy(settings->videoPath, value, sizeof(settings->videoPath));
     }
     // TODO: rename this with units
-    i = ini_find_property(ini, INI_GLOBAL_SECTION, "motion_check_frequency", 20);
+    i = ini_find_property(ini, INI_GLOBAL_SECTION, "motion_check_frequency", 22);
     if (i != INI_NOT_FOUND) {
         value = ini_property_value(ini, INI_GLOBAL_SECTION, i);
         settings->motion_check_frequency = atoi(value);
@@ -371,7 +381,7 @@ void readSettings(SETTINGS* settings) {
             j++;
             p = strtok(NULL, ",");
         }
-        logInfo("Region: %d %d %d %d", settings->region[0], settings->region[1], settings->region[2], settings->region[3]);
+        log_info("Region: %d %d %d %d", settings->region[0], settings->region[1], settings->region[2], settings->region[3]);
     }
     // motion detection threshold
     i = ini_find_property(ini, INI_GLOBAL_SECTION, "threshold", 9);
@@ -381,7 +391,30 @@ void readSettings(SETTINGS* settings) {
         detection_threshold(settings->threshold);
     }
 
+    // heartbeat and metrics hosts
+    i = ini_find_property(ini, INI_GLOBAL_SECTION, "heartbeat_host", 14);
+    if (i != INI_NOT_FOUND) {
+        value = ini_property_value(ini, INI_GLOBAL_SECTION, i);
+        strncpy(settings->heartbeat_host, value, sizeof(settings->heartbeat_host));
+    }
+    i = ini_find_property(ini, INI_GLOBAL_SECTION, "heartbeat_port", 14);
+    if (i != INI_NOT_FOUND) {
+        value = ini_property_value(ini, INI_GLOBAL_SECTION, i);
+        strncpy(settings->heartbeat_port, value, sizeof(settings->heartbeat_port));
+    }
+    i = ini_find_property(ini, INI_GLOBAL_SECTION, "metrics_host", 12);
+    if (i != INI_NOT_FOUND) {
+        value = ini_property_value(ini, INI_GLOBAL_SECTION, i);
+        strncpy(settings->metrics_host, value, sizeof(settings->metrics_host));
+    }
+    i = ini_find_property(ini, INI_GLOBAL_SECTION, "metrics_port", 12);
+    if (i != INI_NOT_FOUND) {
+        value = ini_property_value(ini, INI_GLOBAL_SECTION, i);
+        strncpy(settings->metrics_port, value, sizeof(settings->metrics_port));
+    }
+
     fprintf(stdout, "[INFO] SETTINGS. h264 %dx%d @ %d fps. mjpeg %dx%d. motion_check_frequency: %d\n", settings->h264.width, settings->h264.height, settings->h264.fps, settings->mjpeg.width, settings->mjpeg.height, settings->motion_check_frequency);
+    fprintf(stdout, "[INFO] SETTINGS. heartbeat host %s\n", settings->heartbeat_host);
 
 
     ini_destroy(ini);
@@ -389,13 +422,13 @@ void readSettings(SETTINGS* settings) {
 }
 
 
-void signalHandler(int signal_number) {
-    logError("Got signal. Exiting", __func__);
+void signal_handler(int signal_number) {
+    log_error("Got signal. Exiting", __func__);
     // TODO: think there's an atomic variable meant to help with "signal caught" flags
     pthread_mutex_lock(&running_mutex);
     running = false;
     pthread_mutex_unlock(&running_mutex);
-    logInfo("Signaled");
+    log_info("Signaled");
 }
 
 
@@ -422,7 +455,7 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
     time_t start;
 
     if (gethostname(hostname, 100) != 0) {
-        logError("Failed to gethostname", __func__);
+        log_error("Failed to gethostname", __func__);
         snprintf(hostname, 100, "INVALID");
     }
 
@@ -433,24 +466,24 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
     // Heartbeat address info
     // TODO: do we need to re-run these two blocks every time?
     // as the os to fill in addrinfo data for the host and port we want to send to
-    if ((rv = getaddrinfo("192.168.1.173", "5001", &hints, &heartbeatAddr)) != 0) {
-        logInfo("Failed to getaddrinfo for heartbeat server: %s", gai_strerror(rv));
+    if ((rv = getaddrinfo(settings->heartbeat_host, settings->heartbeat_port, &hints, &heartbeatAddr)) != 0) {
+        log_info("Failed to getaddrinfo for heartbeat server: %s", gai_strerror(rv));
         return;
     }
 
     if ((sockfd = socket(heartbeatAddr->ai_family, heartbeatAddr->ai_socktype, heartbeatAddr->ai_protocol)) == -1) {
-        logError("Failed to create UDP socket. Bailing on heartbeat.", __func__);
+        log_error("Failed to create UDP socket. Bailing on heartbeat.", __func__);
         return;
     }
 
     // Temperature metrics server info
-    if ((rv = getaddrinfo("192.168.1.173", "8125", &hints, &temperatureAddr)) != 0) {
-        logInfo("Failed to getaddrinfo for temperature metrics server: %s", gai_strerror(rv));
+    if ((rv = getaddrinfo(settings->metrics_host, settings->metrics_port, &hints, &temperatureAddr)) != 0) {
+        log_info("Failed to getaddrinfo for temperature metrics server: %s", gai_strerror(rv));
         return;
     }
 
     if ((sockfd = socket(temperatureAddr->ai_family, temperatureAddr->ai_socktype, temperatureAddr->ai_protocol)) == -1) {
-        logError("Failed to create UDP socket for temperature metrics. Bailing on heartbeat.", __func__);
+        log_error("Failed to create UDP socket for temperature metrics. Bailing on heartbeat.", __func__);
         return;
     }
 
@@ -517,28 +550,28 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
         if (restart == 1) {
             int status = mmal_port_parameter_set_boolean(handles->camera->output[CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 0);
             if (status != MMAL_SUCCESS) {
-                logError("Failed to stop camera", __func__);
+                log_error("Failed to stop camera", __func__);
             }
 
             // Re-copy settings values
-            reconfigureRegion(settings);
+            region_reconfigure(settings);
             detection_threshold(settings->threshold);
 
             sleep(1);
             status = mmal_port_parameter_set_boolean(handles->camera->output[CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 1);
             if (status != MMAL_SUCCESS) {
-                logError("Failed to restart camera", __func__);
+                log_error("Failed to restart camera", __func__);
             }
             restart = false;
         }
         pthread_mutex_unlock(&restart_mutex);
 
         /*
-        pthread_mutex_lock(&statsMutex);
+        pthread_mutex_lock(&stats_mutex);
         fps = stats.fps;
         stats.fps = 0;
-        pthread_mutex_unlock(&statsMutex);
-        logInfo("STATS. FPS: %d", fps);
+        pthread_mutex_unlock(&stats_mutex);
+        log_info("STATS. FPS: %d", fps);
         */
 
         // update time annotation when second has changed
@@ -549,13 +582,13 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
         annotate.text[MMAL_CAMERA_ANNOTATE_MAX_TEXT_LEN_V3 - 1] = '\0';
         status = mmal_port_parameter_set(handles->camera->control, &annotate.hdr);
         if (status != MMAL_SUCCESS) {
-            logError("Failed to set annotation", __func__);
+            log_error("Failed to set annotation", __func__);
         }
 
 
         // send heartbeat once per second
         if ((numbytes = sendto(sockfd, "hi", 2, 0, heartbeatAddr->ai_addr, heartbeatAddr->ai_addrlen)) == -1) {
-            logInfo("Failed to send udp heartbeat. errno: %d", errno);
+            log_info("Failed to send udp heartbeat. errno: %d", errno);
         }
 
         // read CPU/GPU temperature every 10 seconds
@@ -574,7 +607,7 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
                 hostname, uptime.tv_sec - start,
                 hostname, fps);
             if ((numbytes = sendto(sockfd, metric, numbytes, 0, temperatureAddr->ai_addr, temperatureAddr->ai_addrlen)) == -1) {
-                logError("Failed to send pimera uptime", __func__);
+                log_error("Failed to send pimera uptime", __func__);
             }
             
             tenIterations = 9;
@@ -588,9 +621,9 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
         pthread_mutex_unlock(&running_mutex);
     }
     close(sockfd);
-    logInfo("Free 1");
+    log_info("Free 1");
     freeaddrinfo(heartbeatAddr);
-    logInfo("Free 2");
+    log_info("Free 2");
     freeaddrinfo(temperatureAddr);
     return;
 }
@@ -603,14 +636,14 @@ int main(int argc, const char **argv) {
     MMAL_STATUS_T status = MMAL_SUCCESS;
 
     // threading
-    pthread_t httpServerThreadId;
-    void *httpServerThreadStatus;
+    pthread_t http_server_thread_id;
+    void *http_server_thread_status;
     int i, num;
 
-    pthread_mutex_init(&httpConnectionsMutex, NULL);
+    pthread_mutex_init(&http_connections_mutex, NULL);
     pthread_mutex_init(&running_mutex, NULL);
-    pthread_mutex_init(&motionDetectionMutex, NULL);
-    pthread_mutex_init(&statsMutex, NULL);
+    pthread_mutex_init(&motion_detection_mutex, NULL);
+    pthread_mutex_init(&stats_mutex, NULL);
     pthread_mutex_init(&stream_connections_mutex, NULL);
     pthread_mutex_init(&motion_connections_mutex, NULL);
     pthread_mutex_init(&still_connections_mutex, NULL);
@@ -628,40 +661,40 @@ int main(int argc, const char **argv) {
     handles.h264_encoder_pool = NULL;
     handles.mjpeg_encoder_pool = NULL;
 
-    setDefaultSettings(&settings);
-    readSettings(&settings);
+    set_default_settings(&settings);
+    read_settings(&settings);
 
-    initDetection(&settings);
+    detection_init(&settings);
 
 
     bcm_host_init();
 
-    signal(SIGINT, signalHandler);
+    signal(SIGINT, signal_handler);
 
     if ((status = create_camera(&handles.camera, &settings)) != MMAL_SUCCESS) {
-        logError("create_camera failed", __func__);
+        log_error("create_camera failed", __func__);
         return EX_ERROR;
 
     } else if ((status = create_splitter(&handles.full_splitter, &handles.full_splitter_connection, handles.camera->output[CAMERA_VIDEO_PORT], 2)) != MMAL_SUCCESS) {
-        logError("create_splitter failed", __func__);
+        log_error("create_splitter failed", __func__);
         destroy_camera(handles.camera);
         return EX_ERROR;
 
     } else if ((status = create_h264_encoder(&handles.h264_encoder, &handles.h264_encoder_pool, &handles.h264_encoder_connection, handles.full_splitter->output[0], h264_callback, &settings.h264)) != MMAL_SUCCESS) {
-        logError("createH26create_h264_encoder4Encoder failed",  __func__);
+        log_error("createH26create_h264_encoder4Encoder failed",  __func__);
         destroy_splitter(handles.full_splitter, handles.full_splitter_connection);
         destroy_camera(handles.camera);
         return EX_ERROR;
     
     } else if ((status = create_resizer(&handles.resizer, &handles.resizer_connection, handles.full_splitter->output[1], &settings.mjpeg)) != MMAL_SUCCESS) {
-        logError("create_resizer failed", __func__);
+        log_error("create_resizer failed", __func__);
         destroy_h264_encoder(handles.h264_encoder, handles.h264_encoder_connection, handles.h264_encoder_pool);
         destroy_splitter(handles.full_splitter, handles.full_splitter_connection);
         destroy_camera(handles.camera);
         return EX_ERROR;
 
     } else if ((status = create_splitter(&handles.resized_splitter, &handles.resized_splitter_connection, handles.resizer->output[0], 2)) != MMAL_SUCCESS) {
-        logError("create_splitter failed", __func__);
+        log_error("create_splitter failed", __func__);
         destroy_resizer(handles.resizer, handles.resizer_connection);
         destroy_h264_encoder(handles.h264_encoder, handles.h264_encoder_connection, handles.h264_encoder_pool);
         destroy_splitter(handles.full_splitter, handles.full_splitter_connection);
@@ -670,7 +703,7 @@ int main(int argc, const char **argv) {
 
 
     } else if ((status = create_mjpeg_encoder(&handles.mjpeg_encoder, &handles.mjpeg_encoder_pool, &handles.mjpeg_encoder_connection, handles.resized_splitter->output[0], mjpeg_callback, &settings.mjpeg)) != MMAL_SUCCESS) {
-        logError("createMjpegEncoder failed", __func__);
+        log_error("createMjpegEncoder failed", __func__);
         destroy_splitter(handles.resized_splitter, handles.resized_splitter_connection);
         destroy_resizer(handles.resizer, handles.resizer_connection);
         destroy_h264_encoder(handles.h264_encoder, handles.h264_encoder_connection, handles.h264_encoder_pool);
@@ -681,12 +714,12 @@ int main(int argc, const char **argv) {
     mjpeg_config(handles.mjpeg_encoder_pool->queue);
 
     // last mile h264 config
-    char videoFilePattern[256];
-    snprintf(videoFilePattern, 255, "%s/%%s_%s_%dx%dx%d.", settings.videoPath, settings.hostname, settings.width, settings.height, settings.h264.fps);
+    char video_file_pattern[256];
+    snprintf(video_file_pattern, 255, "%s/%%s_%s_%dx%dx%d.", settings.videoPath, settings.hostname, settings.width, settings.height, settings.h264.fps);
     h264_config(
         settings.h264.fps,
         handles.h264_encoder_pool->queue,
-        videoFilePattern,
+        video_file_pattern,
         // h264_buffer_size
         (settings.width * settings.height)
         *
@@ -696,7 +729,7 @@ int main(int argc, const char **argv) {
     status = mmal_port_enable(handles.resized_splitter->output[1], yuv_callback);
 
     if (status != MMAL_SUCCESS) {
-        logError("mmal_port_enable failed for mjpeg encoder output", __func__);
+        log_error("mmal_port_enable failed for mjpeg encoder output", __func__);
         destroy_mjpeg_encoder(handles.mjpeg_encoder, handles.mjpeg_encoder_connection, handles.mjpeg_encoder_pool);
         destroy_splitter(handles.resized_splitter, handles.resized_splitter_connection);
         destroy_resizer(handles.resizer, handles.resizer_connection);
@@ -715,7 +748,7 @@ int main(int argc, const char **argv) {
     handles.yuvPool = mmal_port_pool_create(
         handles.resized_splitter->output[1], handles.resized_splitter->output[1]->buffer_num, handles.resized_splitter->output[1]->buffer_size);
     if (!handles.yuvPool) {
-        logError("mmal_port_pool_create failed for mjpeg encoder output", __func__);
+        log_error("mmal_port_pool_create failed for mjpeg encoder output", __func__);
         // TODO: what error code for this?
         return MMAL_ENOMEM;
     }
@@ -730,44 +763,44 @@ int main(int argc, const char **argv) {
 
 
     handles.h264_encoder->output[0]->userdata = NULL;
-    logInfo("Sending buffers to h264 port");
+    log_info("Sending buffers to h264 port");
     send_buffers_to_port(handles.h264_encoder->output[0], handles.h264_encoder_pool->queue);
 
     handles.mjpeg_encoder->output[0]->userdata = NULL;
-    logInfo("Sending buffers to mjpeg port");
+    log_info("Sending buffers to mjpeg port");
     send_buffers_to_port(handles.mjpeg_encoder->output[0], handles.mjpeg_encoder_pool->queue);
 
     handles.resized_splitter->output[1]->userdata = NULL;
-    logInfo("Sending buffers to YUV port");
+    log_info("Sending buffers to YUV port");
     send_buffers_to_port(handles.resized_splitter->output[1], handles.yuvPool->queue);
 
 
     // NOW TURN ON THE CAMERA
     status = mmal_port_parameter_set_boolean(handles.camera->output[CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 1);
     if (status != MMAL_SUCCESS) {
-        logError("Toggling MMAL_PARAMETER_CAPTURE to 1 failed", __func__);
+        log_error("Toggling MMAL_PARAMETER_CAPTURE to 1 failed", __func__);
         // TODO: unwind
     }
 
     // set up http server thread
-    pthread_create(&httpServerThreadId, NULL, httpServer, &settings);
+    pthread_create(&http_server_thread_id, NULL, http_server, &settings);
 
     // heartbeat loop
     heartbeat(&settings, &handles);
 
-    logInfo("Waiting for threads");
+    log_info("Waiting for threads");
     // This bails out of the thread, so we can exit
-    pthread_cancel(httpServerThreadId);
+    pthread_cancel(http_server_thread_id);
     // But we want to gracefully exit the mjpeg thread, instead of bail
-    pthread_join(httpServerThreadId, &httpServerThreadStatus);
+    pthread_join(http_server_thread_id, &http_server_thread_status);
 
     if (settings.verbose) {
-        logInfo("Shutting down");
+        log_info("Shutting down");
     }
 
     status = mmal_port_parameter_set_boolean(handles.camera->output[CAMERA_VIDEO_PORT], MMAL_PARAMETER_CAPTURE, 0);
     if (status != MMAL_SUCCESS) {
-        logError("Toggling MMAL_PARAMETER_CAPTURE to 0 failed", __func__);
+        log_error("Toggling MMAL_PARAMETER_CAPTURE to 0 failed", __func__);
         // TODO: unwind
     }
 
@@ -783,12 +816,12 @@ int main(int argc, const char **argv) {
     destroy_camera(handles.camera);
 
     // clean up the processing queues
-    logInfo("Cleaning up processing queues");
+    log_info("Cleaning up processing queues");
 
-    freeDetection();
+    detection_free();
 
     if (settings.verbose) {
-        logInfo("Shutdown complete");
+        log_info("Shutdown complete");
     }
 
 }

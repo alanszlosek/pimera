@@ -15,10 +15,10 @@
 typedef struct {
     int detection_sleep;
     int stream_sleep;
-    uint8_t *previousFrame;
+    uint8_t *previous_frame;
 
     // holds yuv data so we can spread detection across multiple yuvCallback() calls
-    uint8_t* currentFrame;
+    uint8_t* current_frame;
     unsigned int changed_pixels_threshold;
     unsigned int pixel_delta;
     /*
@@ -37,12 +37,12 @@ typedef struct {
     } processing;
 
     char boundary[81];
-    int boundaryLength;
+    int boundary_length;
 
     unsigned int motion_count;
 } MOTION_DETECTION_T;
-extern MOTION_DETECTION_T motionDetection;
-extern pthread_mutex_t motionDetectionMutex;
+extern MOTION_DETECTION_T motion_detection;
+extern pthread_mutex_t motion_detection_mutex;
 
 void detection_config(unsigned int fps, unsigned int y_length, MMAL_QUEUE_T* queue);
 void detection_threshold(unsigned int threshold);

@@ -33,6 +33,7 @@ struct MJPEG_SETTINGS_S {
     int vcosWidth;
     int vcosHeight;
     unsigned int y_length;
+    unsigned int fps; // default 4
 };
 struct SETTINGS_S {
     int width; // default 1920
@@ -65,6 +66,10 @@ struct SETTINGS_S {
 
     char hostname[100];
     char videoPath[100];
+    char heartbeat_host[100];
+    char heartbeat_port[6];
+    char metrics_host[100];
+    char metrics_port[6];
 };
 
 #endif

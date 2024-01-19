@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <time.h>
 
-void logError(char const* msg, const char *func) {
+void log_error(char const* msg, const char *func) {
     // time prefix
     char t[40];
     time_t rawtime;
@@ -14,7 +14,7 @@ void logError(char const* msg, const char *func) {
     fprintf(stdout, "%s [ERR] in %s: %s\n", t, func, msg);
     fflush(stdout);
 }
-void logInfo(char const* fmt, ...) {
+void log_info(char const* fmt, ...) {
     // time prefix
     char t[40];
     time_t rawtime;
