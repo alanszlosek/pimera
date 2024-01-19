@@ -441,7 +441,7 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
     bool r;
 
     int sockfd;
-    struct addrinfo hints, *heartbeatAddr, *temperatureAddr;
+    struct addrinfo hints, *heartbeatAddr, *metricsAddr;
     int rv;
     int numbytes;
     // temperature stuff
@@ -482,17 +482,17 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
 
     // Temperature metrics server info
     if (strnlen(settings->metrics_host, SETTINGS_HOST_SIZE) && strnlen(settings->metrics_port, SETTINGS_PORT_SIZE)) {
-        if ((rv = getaddrinfo(settings->metrics_host, settings->metrics_port, &hints, &temperatureAddr)) != 0) {
+        if ((rv = getaddrinfo(settings->metrics_host, settings->metrics_port, &hints, &metricsAddr)) != 0) {
             log_info("Failed to getaddrinfo for temperature metrics server: %s", gai_strerror(rv));
             return;
         }
 
-        if ((sockfd = socket(temperatureAddr->ai_family, temperatureAddr->ai_socktype, temperatureAddr->ai_protocol)) == -1) {
+        if ((sockfd = socket(metricsAddr->ai_family, metricsAddr->ai_socktype, metricsAddr->ai_protocol)) == -1) {
             log_error("Failed to create UDP socket for temperature metrics. Bailing on heartbeat.", __func__);
             return;
         }
     } else {
-        temperatureAddr = NULL;
+        metricsAddr = NULL;
     }
 
     // get start time
@@ -609,7 +609,7 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
         */
         if (tenIterations == 0) {
             // Send uptime metric
-            if (temperatureAddr) {
+            if (metricsAddr) {
                 clock_gettime(CLOCK_REALTIME, &uptime);
                 numbytes = snprintf(
                     metric,
@@ -617,7 +617,7 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
                     "raspi.pimera.seconds,host=%s:%ld|g\nraspi.pimera.fps,host=%s:%d|g",
                     hostname, uptime.tv_sec - start,
                     hostname, fps);
-                if ((numbytes = sendto(sockfd, metric, numbytes, 0, temperatureAddr->ai_addr, temperatureAddr->ai_addrlen)) == -1) {
+                if ((numbytes = sendto(sockfd, metric, numbytes, 0, metricsAddr->ai_addr, metricsAddr->ai_addrlen)) == -1) {
                     log_error("Failed to send pimera uptime", __func__);
                 }
             }
@@ -636,7 +636,7 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
     log_info("Free 1");
     freeaddrinfo(heartbeatAddr);
     log_info("Free 2");
-    freeaddrinfo(temperatureAddr);
+    freeaddrinfo(metricsAddr);
     return;
 }
 
