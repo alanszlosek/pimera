@@ -395,7 +395,7 @@ void read_settings(SETTINGS* settings) {
     i = ini_find_property(ini, INI_GLOBAL_SECTION, "heartbeat_host", 14);
     if (i != INI_NOT_FOUND) {
         value = ini_property_value(ini, INI_GLOBAL_SECTION, i);
-        strncpy(settings->heartbeat_host, value, sizeof(settings->heartbeat_host));
+        strncpy(settings->heartbeat_host, value, SETTINGS_HOST_SIZE);
     }
     i = ini_find_property(ini, INI_GLOBAL_SECTION, "heartbeat_port", 14);
     if (i != INI_NOT_FOUND) {
@@ -405,7 +405,7 @@ void read_settings(SETTINGS* settings) {
     i = ini_find_property(ini, INI_GLOBAL_SECTION, "metrics_host", 12);
     if (i != INI_NOT_FOUND) {
         value = ini_property_value(ini, INI_GLOBAL_SECTION, i);
-        strncpy(settings->metrics_host, value, sizeof(settings->metrics_host));
+        strncpy(settings->metrics_host, value, SETTINGS_HOST_SIZE);
     }
     i = ini_find_property(ini, INI_GLOBAL_SECTION, "metrics_port", 12);
     if (i != INI_NOT_FOUND) {
@@ -466,25 +466,33 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
     // Heartbeat address info
     // TODO: do we need to re-run these two blocks every time?
     // as the os to fill in addrinfo data for the host and port we want to send to
-    if ((rv = getaddrinfo(settings->heartbeat_host, settings->heartbeat_port, &hints, &heartbeatAddr)) != 0) {
-        log_info("Failed to getaddrinfo for heartbeat server: %s", gai_strerror(rv));
-        return;
-    }
+    if (strnlen(settings->heartbeat_host, SETTINGS_HOST_SIZE) && strnlen(settings->heartbeat_port, SETTINGS_PORT_SIZE)) {
+        if ((rv = getaddrinfo(settings->heartbeat_host, settings->heartbeat_port, &hints, &heartbeatAddr)) != 0) {
+            log_info("Failed to getaddrinfo for heartbeat server: %s", gai_strerror(rv));
+            return;
+        }
 
-    if ((sockfd = socket(heartbeatAddr->ai_family, heartbeatAddr->ai_socktype, heartbeatAddr->ai_protocol)) == -1) {
-        log_error("Failed to create UDP socket. Bailing on heartbeat.", __func__);
-        return;
+        if ((sockfd = socket(heartbeatAddr->ai_family, heartbeatAddr->ai_socktype, heartbeatAddr->ai_protocol)) == -1) {
+            log_error("Failed to create UDP socket. Bailing on heartbeat.", __func__);
+            return;
+        }
+    } else {
+        heartbeatAddr = NULL;
     }
 
     // Temperature metrics server info
-    if ((rv = getaddrinfo(settings->metrics_host, settings->metrics_port, &hints, &temperatureAddr)) != 0) {
-        log_info("Failed to getaddrinfo for temperature metrics server: %s", gai_strerror(rv));
-        return;
-    }
+    if (strnlen(settings->metrics_host, SETTINGS_HOST_SIZE) && strnlen(settings->metrics_port, SETTINGS_PORT_SIZE)) {
+        if ((rv = getaddrinfo(settings->metrics_host, settings->metrics_port, &hints, &temperatureAddr)) != 0) {
+            log_info("Failed to getaddrinfo for temperature metrics server: %s", gai_strerror(rv));
+            return;
+        }
 
-    if ((sockfd = socket(temperatureAddr->ai_family, temperatureAddr->ai_socktype, temperatureAddr->ai_protocol)) == -1) {
-        log_error("Failed to create UDP socket for temperature metrics. Bailing on heartbeat.", __func__);
-        return;
+        if ((sockfd = socket(temperatureAddr->ai_family, temperatureAddr->ai_socktype, temperatureAddr->ai_protocol)) == -1) {
+            log_error("Failed to create UDP socket for temperature metrics. Bailing on heartbeat.", __func__);
+            return;
+        }
+    } else {
+        temperatureAddr = NULL;
     }
 
     // get start time
@@ -587,8 +595,10 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
 
 
         // send heartbeat once per second
-        if ((numbytes = sendto(sockfd, "hi", 2, 0, heartbeatAddr->ai_addr, heartbeatAddr->ai_addrlen)) == -1) {
-            log_info("Failed to send udp heartbeat. errno: %d", errno);
+        if (heartbeatAddr) {
+            if ((numbytes = sendto(sockfd, "hi", 2, 0, heartbeatAddr->ai_addr, heartbeatAddr->ai_addrlen)) == -1) {
+                log_info("Failed to send udp heartbeat. errno: %d", errno);
+            }
         }
 
         // read CPU/GPU temperature every 10 seconds
@@ -599,15 +609,17 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
         */
         if (tenIterations == 0) {
             // Send uptime metric
-            clock_gettime(CLOCK_REALTIME, &uptime);
-            numbytes = snprintf(
-                metric,
-                500,
-                "raspi.pimera.seconds,host=%s:%ld|g\nraspi.pimera.fps,host=%s:%d|g",
-                hostname, uptime.tv_sec - start,
-                hostname, fps);
-            if ((numbytes = sendto(sockfd, metric, numbytes, 0, temperatureAddr->ai_addr, temperatureAddr->ai_addrlen)) == -1) {
-                log_error("Failed to send pimera uptime", __func__);
+            if (temperatureAddr) {
+                clock_gettime(CLOCK_REALTIME, &uptime);
+                numbytes = snprintf(
+                    metric,
+                    500,
+                    "raspi.pimera.seconds,host=%s:%ld|g\nraspi.pimera.fps,host=%s:%d|g",
+                    hostname, uptime.tv_sec - start,
+                    hostname, fps);
+                if ((numbytes = sendto(sockfd, metric, numbytes, 0, temperatureAddr->ai_addr, temperatureAddr->ai_addrlen)) == -1) {
+                    log_error("Failed to send pimera uptime", __func__);
+                }
             }
             
             tenIterations = 9;

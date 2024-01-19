@@ -12,6 +12,9 @@
 #include "interface/mmal/util/mmal_util.h"
 #include "interface/mmal/util/mmal_util_params.h"
 
+#define SETTINGS_HOST_SIZE 100
+#define SETTINGS_PORT_SIZE 6
+
 typedef struct HANDLES_S HANDLES;
 typedef struct SETTINGS_S SETTINGS;
 typedef struct H264_SETTINGS_S H264_SETTINGS;
@@ -64,12 +67,12 @@ struct SETTINGS_S {
     MMAL_PARAM_FLICKERAVOID_T flickerAvoidMode;
     MMAL_PARAM_AWBMODE_T awbMode;
 
-    char hostname[100];
+    char hostname[SETTINGS_HOST_SIZE + 1];
     char videoPath[100];
-    char heartbeat_host[100];
-    char heartbeat_port[6];
-    char metrics_host[100];
-    char metrics_port[6];
+    char heartbeat_host[SETTINGS_HOST_SIZE + 1];
+    char heartbeat_port[SETTINGS_PORT_SIZE + 1];
+    char metrics_host[SETTINGS_HOST_SIZE + 1];
+    char metrics_port[SETTINGS_PORT_SIZE + 1];
 };
 
 #endif
