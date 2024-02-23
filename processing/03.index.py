@@ -14,7 +14,6 @@ config = json.load(fp)
 basePath = config['videoPath']
 
 my = mysql.connector.connect(user=config['username'], password=config['password'], host=config['host'], database=config['database'])
-c = my.cursor()
 
 
 def iterateOverFiles(root):
@@ -64,12 +63,12 @@ for filepath in iterateOverFiles(basePath):
         tzinfo=datetime.timezone(datetime.timedelta(0))
     ).timestamp()
 
-    c = my.cursor()
+    c = my.cursor(dictionary=True)
     c.execute('SELECT id from videos WHERE path=%s', (relativePath,))
     row = c.fetchone()
     if not row:
         print('Found new file. Indexing: ' + filename)
-        c.execute('INSERT INTO videos (path,createdAt) VALUES(%s,%s)', (relativePath, ts))
+        c.execute('INSERT INTO videos (path,createdAt,sizeBytes) VALUES(%s,%s)', (relativePath, ts, stat.st_size))
         videoId = c.lastrowid
 
         # add tag for camera name
@@ -86,6 +85,10 @@ for filepath in iterateOverFiles(basePath):
                 tagId = c.lastrowid
             c.execute('REPLACE INTO video_tag (tagId,videoId,taggedBy) VALUES(%s,%s,%s)', (tagId,videoId,3))
 
+        my.commit()
+    else:
+        print('Updating file size for: ' + filename)
+        c.execute('UPDATE videos SET sizeBytes=%s WHERE id=%s', (stat.st_size, row['id']))
         my.commit()
         
 my.close()
