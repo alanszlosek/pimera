@@ -16,8 +16,9 @@ else
     source venv/bin/activate
 fi
 
-./01.copy.sh /mnt/media/surveillance/h264/ || exit 1
+./01.copy.sh /mnt/media/surveillance/ || exit 1
 python3 -u ./02.convert.py /mnt/media/surveillance || exit 1
+python3 -u ./02.organize.py /mnt/media/surveillance || exit 1
 python3 -u ./03.index.py || exit 1
 python3 -u ./04.detection.py || exit 1
 
