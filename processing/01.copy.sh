@@ -2,7 +2,7 @@
 set -e
 
 HOSTS=$(cat hosts.txt)
-HOST_USERNAME=pi
+HOST_USERNAME=pimera
 DESTINATION=$1
 
 date
@@ -15,7 +15,6 @@ do
 		# Make a list of files to copy so we can be more targeted in removal.
 		# If we do a general "rm *.h264" as last step, it may remove files
 		# that were created while we were copying, which means files will be lost.
-		# Use find . -name '*.ext' to avoid shell expansion when there are many files
 		ssh "${HOST_USERNAME}@${ip}" "cd ~/${ext}; find . -name '*.${ext}'" > ./all_files
 		# Clean up from previous run
 		rm -f file_batch*
@@ -36,7 +35,8 @@ do
 				# Preserve timestamps to prevent duplicate copies if the script
 				# fails for some reason.
 				# Then remove the files rsync copied, but only if rsync succeeds
-				rsync -tv --files-from=${batch} "${HOST_USERNAME}@${ip}:${ext}/" "${DESTINATION}/${ext}/" && ssh "${HOST_USERNAME}@${ip}" "cd ~/${ext}; rm "$BATCH_FILES"" done
+				rsync -tv --files-from=${batch} "${HOST_USERNAME}@${ip}:${ext}/" "${DESTINATION}/${ext}/" && ssh "${HOST_USERNAME}@${ip}" "cd ~/${ext}; rm "$BATCH_FILES""
+			done
 		fi
 	done
 
