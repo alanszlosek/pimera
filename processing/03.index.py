@@ -68,7 +68,7 @@ for filepath in iterateOverFiles(basePath):
     row = c.fetchone()
     if not row:
         print('Found new file. Indexing: ' + filename)
-        c.execute('INSERT INTO videos (path,createdAt,sizeBytes) VALUES(%s,%s)', (relativePath, ts, stat.st_size))
+        c.execute('INSERT INTO videos (path,createdAt,sizeBytes) VALUES(%s,%s,%s)', (relativePath, ts, stat.st_size))
         videoId = c.lastrowid
 
         # add tag for camera name
@@ -78,7 +78,7 @@ for filepath in iterateOverFiles(basePath):
             c.execute('SELECT id FROM tags WHERE tag=%s', (tag,))
             tagRow = c.fetchone()
             if tagRow:
-                tagId = tagRow[0]
+                tagId = tagRow['id']
             else:
                 print('Camera tag not found, pre-creating: %s' % (tag,))
                 c.execute('INSERT INTO tags (tag) VALUES(%s)', (tag,))
