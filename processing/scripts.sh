@@ -10,8 +10,7 @@ cd -- "$(dirname "$0")"
 if [[ ! -d "./venv" ]]; then
     python3 -m venv ./venv
     source venv/bin/activate
-    pip install mysql-connector-python ultralytics opencv-python
-    #pip install mysql-connector-python ultralytics Pillow opencv-python
+    pip install mysql-connector-python ultralytics Pillow opencv-python
 else
     source venv/bin/activate
 fi
