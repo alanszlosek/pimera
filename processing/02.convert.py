@@ -40,6 +40,7 @@ if __name__ == '__main__':
 
     parentPath = sys.argv[1]
     path = os.path.join(parentPath, 'h264') + '/*.h264'
+    print("Converting h264 to mp4")
     print(path)
 
     files = glob.glob(path)
@@ -49,7 +50,7 @@ if __name__ == '__main__':
     #for source in files:
     #    print( task(source) )
 
-    with multiprocessing.Pool(processes=2) as p:
+    with multiprocessing.Pool(processes=5) as p:
         results = p.map(func=task2, iterable=files, chunksize=1)
         print(results)
 
