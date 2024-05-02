@@ -12,27 +12,6 @@ config = json.load(fp)
 my = mysql.connector.connect(user=config['username'], password=config['password'], host=config['host'], database=config['database'])
 c = my.cursor()
 
-# THESE ARE OLD
-queries = [
-    # mark videos without any tags
-    "update videos as v1 set v1.status=2 where v1.status<>2 and v1.id in (select v2.id from videos as v2 where v2.objectDetectionRan=1 and v2.id not in (select distinct t.videoId from video_tag as t))",
-
-    # tagged only with raspi4: 64
-    "update videos as v1 set v1.status=2 where v1.status<>2 and v1.objectDetectionRan=1 and v1.id in (select t1.videoId from video_tag as t1 where t1.videoId in (select distinct t2.videoId from video_tag as t2 where t2.tagId=64) group by t1.videoId having count(t1.videoId) = 1)",
-
-    # tagged only with car and raspi4
-    "update videos set status=2 where status<>2 and objectDetectionRan=1 and id in (select videoId from video_tag where videoId in (select videoId from video_tag where tagId=1 UNION select videoId from video_tag where tagId=64) group by videoId having count(videoId) = 2)",
-
-    # tagged only with truck and raspi4
-    "update videos set status=2 where status<>2 and objectDetectionRan=1 id in (select videoId from video_tag where videoId in (select videoId from video_tag where tagId=6 UNION select videoId from video_tag where tagId=64) group by videoId having count(videoId) = 2)",
-
-    # tagged only with car, truck, raspi4
-    "update videos set status=2 where status<>2 and objectDetectionRan=1 and id in (select videoId from video_tag where videoId in (select videoId from video_tag where tagId=1 UNION select videoId from video_tag where tagId=6 UNION select videoId from video_tag where tagId=64) group by videoId having count(videoId) = 2)",
-
-    # tagged only with car, truck, boat
-    "update videos set status=2 where status<>2 and objectDetectionRan=1 id in (select videoId from video_tag where videoId in (select videoId from video_tag where tagId=1 UNION select videoId from video_tag where tagId=6 UNION select videoId from video_tag where tagId=9 UNION select videoId from video_tag where tagId=64) group by videoId having count(videoId) = 3)"
-]
-
 tags = [
     # no tags
     [],
@@ -56,15 +35,18 @@ def unionPart(id):
 c = my.cursor()
 for tagIds in tags:
     if len(tagIds) > 0:
-        parts = map(unionPart, tagIds)
-        subquery = " UNION ".join(parts)
+        tagIds_str = ",".join(map(str,tagIds))
+        clauses = [
+            # start with clause to make sure video doesn't have tags outside of the list we care about
+            f"videoId not in (SELECT videoId from video_tag where tagId NOT IN ({tagIds_str}))"
+        ]
+        for tagId in tagIds:
+            clauses.append(f"videoId in (SELECT videoId FROM video_tag WHERE tagId={tagId})")
+        #print(clauses)
 
-        #c.execute(sql)
-        #tagIds = set()
-        #for row in c:
-        #    tagIds.append( row['videoId'] )
+        clauses2 = ' AND '.join(clauses)
 
-        sql = "select videoId from video_tag where videoId in (%s) GROUP BY videoId HAVING COUNT(videoId) = %d" % (subquery, len(tagIds))
+        sql = f"select videoId from video_tag where {clauses2}"
         #print(sql)
 
         ids = set()
@@ -73,7 +55,10 @@ for tagIds in tags:
             ids.add( row[0] )
         #print(ids)
 
-        clause = "(%s)" % ( ','.join(map(str,ids)), )
+        if not len(ids):
+            continue
+
+        clause = "(" + ','.join(map(str,ids)) + ")"
         sql = "update videos set status=2 where status<>2 and objectDetectionRan=1 and id in %s" % (clause,)
         #print(sql)
         c.execute(sql)
