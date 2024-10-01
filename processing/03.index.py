@@ -32,7 +32,7 @@ for filepath in iterateOverFiles(basePath):
     else:
         cameraName = None
 
-    relativePath = filepath.replace('/mnt/media/surveillance', '')
+    relativePath = filepath.replace(config["videoPath"], '')
     # skip staging folder
     if relativePath[:5] == '/h264':
         continue
@@ -71,24 +71,25 @@ for filepath in iterateOverFiles(basePath):
         c.execute('INSERT INTO videos (path,createdAt,sizeBytes) VALUES(%s,%s,%s)', (relativePath, ts, stat.st_size))
         videoId = c.lastrowid
 
-        # add tag for camera name
-        if cameraName:
-            # make sure tag exists in tags table
-            tag = 'camera:' + cameraName
-            c.execute('SELECT id FROM tags WHERE tag=%s', (tag,))
-            tagRow = c.fetchone()
-            if tagRow:
-                tagId = tagRow['id']
-            else:
-                print('Camera tag not found, pre-creating: %s' % (tag,))
-                c.execute('INSERT INTO tags (tag) VALUES(%s)', (tag,))
-                tagId = c.lastrowid
-            c.execute('REPLACE INTO video_tag (tagId,videoId,taggedBy) VALUES(%s,%s,%s)', (tagId,videoId,3))
-
-        my.commit()
     else:
+        videoId = row['id']
         print('Updating file size for: ' + filename)
-        c.execute('UPDATE videos SET sizeBytes=%s WHERE id=%s', (stat.st_size, row['id']))
-        my.commit()
+        c.execute('UPDATE videos SET sizeBytes=%s WHERE id=%s', (stat.st_size, videoId))
+
+    # add tag for camera name
+    if cameraName:
+        # make sure tag exists in tags table
+        tag = 'camera:' + cameraName
+        c.execute('SELECT id FROM tags WHERE tag=%s', (tag,))
+        tagRow = c.fetchone()
+        if tagRow:
+            tagId = tagRow['id']
+        else:
+            print('Camera tag not found, pre-creating: %s' % (tag,))
+            c.execute('INSERT INTO tags (tag) VALUES(%s)', (tag,))
+            tagId = c.lastrowid
+        c.execute('REPLACE INTO video_tag (tagId,videoId,taggedBy,confidence) VALUES(%s,%s,%s,100)', (tagId,videoId,3))
+
+    my.commit()
         
 my.close()
