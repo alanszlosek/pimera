@@ -6,6 +6,7 @@
 
     "model": "/home/pimera/yolov8x.pt",
     "videoPath": "/mnt/media/surveillance",
+    "apiHost": "http://192.168.10.183:8000",
 
-    "statsdHost": "192.168.1.234"
+    "statsdHost": "192.168.10.1"
 }
