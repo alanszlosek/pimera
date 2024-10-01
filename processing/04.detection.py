@@ -6,6 +6,7 @@ import mysql.connector
 import os
 import pathlib
 import re
+import requests
 import socket
 import time
 from ultralytics import YOLO
@@ -21,6 +22,12 @@ def get_connection():
     global config
     return mysql.connector.connect(user=config['username'], password=config['password'], host=config['host'], database=config['database'])
 
+def upload_image(path, data):
+    global config
+    # path should be "/api/image/20240930/bla.jpg"
+    headers = {'content-type': 'image/jpeg'}
+    r = requests.post(f"http://{config['apiHost']}/api/image{path}", data=data, verify=False, headers=headers)
+
 
 class Detection:
     def __init__(self, config):
@@ -35,6 +42,7 @@ class Detection:
         return dbCursor.fetchone()
 
     def Run(self):
+        global config
         db = get_connection()
 
         row = self.NextRow(db)
@@ -58,9 +66,13 @@ class Detection:
 
             videoFile = basePath + row['path']
             thumbnailBasePath = videoFile[:-4] # excluding the ".mp4"
+            thumbnailFilePrefix = row["path"][:-4] # chop off extension
 
+            # TODO: set this to pull from config
+            videoFile = f"{config["apiHost"]}/movies{row["path"]}"
             print( f"Opened and processing: {videoFile}" )
             results = self.Process(videoFile, skip)
+            # TODO: also figure out how to remove file after processing if we fetched from http
 
             # TODO: perhaps if results == False there was an open failure
 
@@ -70,8 +82,16 @@ class Detection:
             for detected, result in results.items():
                 if detected == '__':
                     # save cover image
-                    imagePath = f"{thumbnailBasePath}.jpg"
-                    cv2.imwrite(imagePath, result['image'])
+                    # imagePath = f"{thumbnailBasePath}.jpg"
+                    # cv2.imwrite(imagePath, result['image'])
+
+                    # Instead of writing to disk, post to API to save image
+                    result,encimg = cv2.imencode('.jpg',result["image"])
+                    filename = f"{thumbnailFilePrefix}.jpg"
+                    if result:
+                        upload_image(filename, encimg.tobytes())
+                    else:
+                        print("Failed to encode image: " + filename)
                     continue
                 # make sure tag exists in tags table
                 dbCursor2.execute('SELECT id FROM tags WHERE tag=%s', (detected,))
@@ -85,8 +105,16 @@ class Detection:
 
                 dbCursor2.execute('REPLACE INTO video_tag (tagId,videoId,confidence,taggedBy) VALUES(%s,%s,%s,%s)', (tagId, rowId, result['confidence'], 2))
 
-                imagePath = f"{thumbnailBasePath}_{detected}.jpg"
-                cv2.imwrite(imagePath, result['image'])
+                # imagePath = f"{thumbnailBasePath}_{detected}.jpg"
+                # cv2.imwrite(imagePath, result['image'])
+                # Instead of writing to disk, post to API to save image
+
+                result,encimg = cv2.imencode('.jpg',result["image"])
+                filename = f"{thumbnailFilePrefix}_{detected}.jpg"
+                if result:
+                    upload_image(filename, encimg.tobytes())
+                else:
+                    print("Failed to encode image: " + filename)
             db.commit()
             dbCursor2.close()
 
@@ -144,4 +172,3 @@ class Detection:
 
 d = Detection(config)
 d.Run()
-
