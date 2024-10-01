@@ -1,7 +1,14 @@
+CREATE TABLE tags (
+    id bigint unsigned primary key auto_increment,
+    tag varchar(255)
+);
+CREATE INDEX tags_tag on tags(tag);
+
 CREATE TABLE videos (
     id bigint unsigned primary key auto_increment,
     path varchar(255), -- relative path
     createdAt bigint unsigned not null default 0,
+    sizeBytes bigint unsigned not null default 0,
     
     -- bitwise status: 0 visible, 1 hidden, 2 deleted
     status tinyint unsigned not null default 0,
@@ -26,4 +33,3 @@ CREATE TABLE video_tag (
 CREATE UNIQUE INDEX tagId_videoId on video_tag (tagId,videoId);
 CREATE UNIQUE INDEX video_tag_videoId on video_tag (videoId);
 CREATE UNIQUE INDEX video_tag_tagId on video_tag (tagId);
-

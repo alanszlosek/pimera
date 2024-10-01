@@ -847,7 +847,8 @@ var recordings = {
                 let tags = [];
                 for (let i = 0; i < files.length; i++) {
                     let video = files[i];
-                    let videoImagePrefix = video.path.replace(/\/[0-9]{8}/, '').replace('.mp4', '');
+                    //let videoImagePrefix = video.path.replace(/\/[0-9]{8}/, '').replace('.mp4', '');
+                    let videoImagePrefix = video.path.replace('.mp4', '');
                     let fn = video.filename;
 
                     // TODO: use regex to split this and resolution and fps
