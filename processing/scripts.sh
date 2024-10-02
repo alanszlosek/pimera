@@ -17,10 +17,10 @@ else
 fi
 
 
-D=/mnt/2024/media/surveillance2/
-./01.copy.sh "${D}" || exit 1
-python3 -u ./02.convert.py "${D}" || exit 1
-python3 -u ./02.organize.py "${D}" || exit 1
+VIDEO_PATH=$(cat ../config.json | jq -r .videoPath)
+./01.copy.sh "${VIDEO_PATH}" || exit 1
+python3 -u ./02.convert.py "${VIDEO_PATH}" || exit 1
+python3 -u ./02.organize.py "${VIDEO_PATH}" || exit 1
 python3 -u ./03.index.py || exit 1
 python3 -u ./04.detection.py || exit 1
 
