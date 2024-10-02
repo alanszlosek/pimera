@@ -68,7 +68,6 @@ class Detection:
             thumbnailBasePath = videoFile[:-4] # excluding the ".mp4"
             thumbnailFilePrefix = row["path"][:-4] # chop off extension
 
-            # TODO: set this to pull from config
             videoFile = f"{config["apiHost"]}/movies{row["path"]}"
             print( f"Opened and processing: {videoFile}" )
             results = self.Process(videoFile, skip)
@@ -172,3 +171,4 @@ class Detection:
 
 d = Detection(config)
 d.Run()
+
