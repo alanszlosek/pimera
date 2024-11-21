@@ -1,3 +1,4 @@
+import cv2
 import datetime
 import hashlib
 import json
@@ -68,7 +69,16 @@ for filepath in iterateOverFiles(basePath):
     row = c.fetchone()
     if not row:
         print('Found new file. Indexing: ' + filename)
-        c.execute('INSERT INTO videos (path,createdAt,sizeBytes) VALUES(%s,%s,%s)', (relativePath, ts, stat.st_size))
+
+        # Open with OpenCV to get video duration
+        v = cv2.VideoCapture(filepath)
+        fps = v.get(cv2.CAP_PROP_FPS)
+        frame_count = int(v.get(cv2.CAP_PROP_FRAME_COUNT))
+        v.release()
+        duration_milliseconds = int( (frame_count/fps) * 1000)
+        # Geez if I'm doing the above, why not grab the thumbnail, too?
+
+        c.execute('INSERT INTO videos (path,createdAt,sizeBytes,durationMilliseconds) VALUES(%s,%s,%s,%s)', (relativePath, ts, stat.st_size, duration_milliseconds))
         videoId = c.lastrowid
 
         # add tag for camera name
