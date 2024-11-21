@@ -68,10 +68,14 @@ class Detection:
             thumbnailBasePath = videoFile[:-4] # excluding the ".mp4"
             thumbnailFilePrefix = row["path"][:-4] # chop off extension
 
-            videoFile = f"{config["apiHost"]}/movies{row["path"]}"
+            videoFile = f"{config['apiHost']}/movies{row['path']}"
             print( f"Opened and processing: {videoFile}" )
             results = self.Process(videoFile, skip)
             # TODO: also figure out how to remove file after processing if we fetched from http
+            if videoFile.startswith("http"):
+                filename = videoFile.split("/").pop()
+                print(f"Removing {filename}")
+                os.remove(filename)
 
             # TODO: perhaps if results == False there was an open failure
 
@@ -120,11 +124,9 @@ class Detection:
             elapsed = time.time() - st
 
             detections = len(results) - 1
-            # since we do four object detections every second
-            durationSeconds = detections / 4
             # update locations to signal we've run object detection on this file
             dbCursor = db.cursor(dictionary=True)
-            dbCursor.execute('UPDATE videos SET objectDetectionRan=1,objectDetectionRanAt=%s,objectDetectionRunSeconds=%s,durationSeconds=%s WHERE id=%s', (datetime.datetime.now().timestamp(), elapsed, durationSeconds, rowId))
+            dbCursor.execute('UPDATE videos SET objectDetectionRan=1,objectDetectionRanAt=%s,objectDetectionRunSeconds=%s WHERE id=%s', (datetime.datetime.now().timestamp(), elapsed, rowId))
             db.commit()
             dbCursor.close()
 
@@ -171,4 +173,3 @@ class Detection:
 
 d = Detection(config)
 d.Run()
-
