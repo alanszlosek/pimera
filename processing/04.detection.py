@@ -26,7 +26,7 @@ def upload_image(path, data):
     global config
     # path should be "/api/image/20240930/bla.jpg"
     headers = {'content-type': 'image/jpeg'}
-    r = requests.post(f"http://{config['apiHost']}/api/image{path}", data=data, verify=False, headers=headers)
+    r = requests.post(f"{config['apiHost']}/api/image{path}", data=data, verify=False, headers=headers)
 
 
 class Detection:
