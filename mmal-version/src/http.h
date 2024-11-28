@@ -1,5 +1,6 @@
 #ifndef HTTP_H
 #define HTTP_H
+#include "settings.h"
 
 typedef struct connection {
     int fd;
@@ -15,6 +16,7 @@ extern pthread_mutex_t http_connections_mutex;
 
 void http_server_thread_cleanup(void *arg);
 void *http_server(void *v);
-int socket_send(int socket, char* data, int length);
+int socket_send(int, char*, int);
 
+int handle_request(char*, int, SETTINGS*);
 #endif

@@ -517,7 +517,7 @@ void heartbeat(SETTINGS* settings, HANDLES* handles) {
     annotate.show_caf = MMAL_FALSE;
     annotate.show_motion = MMAL_FALSE;
     annotate.show_frame_num = MMAL_FALSE;
-    annotate.enable_text_background = MMAL_FALSE;
+    annotate.enable_text_background = MMAL_TRUE;
     annotate.custom_background_colour = MMAL_FALSE;
     annotate.custom_text_colour = MMAL_FALSE;
     annotate.text_size = 0; // choose font size automatically
