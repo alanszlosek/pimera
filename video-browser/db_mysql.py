@@ -35,14 +35,14 @@ def get_files(query):
         if tags != 'NONE':
             if re.fullmatch('^[0-9]+(,[0-9]+)*$', tags):
                 num = len(tags.split(','))
-                c.execute('SELECT id,path,createdAt,durationSeconds FROM videos WHERE status=0 AND id IN (SELECT videoId FROM video_tag WHERE tagId IN (%s) GROUP BY videoId HAVING count(tagId)=%%s ) ORDER BY createdAt DESC LIMIT %%s,%%s' % (tags,), (num, offset, limit))
+                c.execute('SELECT id,path,createdAt,durationMilliseconds FROM videos WHERE status=0 AND id IN (SELECT videoId FROM video_tag WHERE tagId IN (%s) GROUP BY videoId HAVING count(tagId)=%%s ) ORDER BY createdAt DESC LIMIT %%s,%%s' % (tags,), (num, offset, limit))
             else:
-                c.execute('SELECT id,path,createdAt,durationSeconds FROM videos WHERE status=0 ORDER BY createdAt DESC LIMIT %s,%s', (offset, limit))
+                c.execute('SELECT id,path,createdAt,durationMilliseconds FROM videos WHERE status=0 ORDER BY createdAt DESC LIMIT %s,%s', (offset, limit))
         else:
             # return videos without any tags
-            c.execute('SELECT id,path,createdAt,durationSeconds FROM videos WHERE status=0 AND id NOT IN (SELECT DISTINCT videoId FROM video_tag) ORDER BY createdAt DESC LIMIT %s,%s', (offset, limit))
+            c.execute('SELECT id,path,createdAt,durationMilliseconds FROM videos WHERE status=0 AND id NOT IN (SELECT DISTINCT videoId FROM video_tag) ORDER BY createdAt DESC LIMIT %s,%s', (offset, limit))
     else:
-        c.execute('SELECT id,path,createdAt,durationSeconds FROM videos WHERE status=0 ORDER BY createdAt DESC LIMIT %s,%s', (offset, limit))
+        c.execute('SELECT id,path,createdAt,durationMilliseconds FROM videos WHERE status=0 ORDER BY createdAt DESC LIMIT %s,%s', (offset, limit))
     out = []
     for row in c:
         d.execute('SELECT t.tag FROM tags AS t LEFT JOIN video_tag AS ft ON (ft.tagId=t.id) WHERE ft.videoId=%s ORDER BY t.tag', (row[0],))
@@ -56,7 +56,7 @@ def get_files(query):
             'filename': os.path.basename(row[1]),
             'tags': tags,
             'createdAt': row[2],
-            'durationSeconds': row[3]
+            'durationMilliseconds': row[3]
         })
     db.close()
     return out

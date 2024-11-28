@@ -410,6 +410,10 @@ let prettySeconds = function(seconds) {
     seconds = Math.round(seconds % 60);
     return ('00' + minutes).slice(-2) + ':' + ('00' + seconds).slice(-2);
 };
+let prettyMilliseconds = function(milliseconds) {
+    // for now
+    return prettySeconds( milliseconds / 1000 );
+};
 
 var handles = {
     body: document.body,
@@ -887,7 +891,7 @@ var recordings = {
                                     {class:"meta"},
                                     [
                                         tag('div', {}, [dt]),
-                                        tag('div', {class: 'duration'}, [fps + ' fps | ' + prettySeconds(video.durationSeconds)])
+                                        tag('div', {class: 'duration'}, [fps + ' fps | ' + prettyMilliseconds(video.durationMilliseconds)])
                                     ]
                                 ),
                                 /*
