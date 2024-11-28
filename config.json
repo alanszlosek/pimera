@@ -7,6 +7,7 @@
     "model": "/home/pimera/yolov8x.pt",
     "videoPath": "/mnt/media/surveillance",
     "apiHost": "http://192.168.10.183:8000",
+    "skippedTags": ["bear", "bench", "dining table", "elephant"],
 
     "statsdHost": "192.168.10.1"
 }

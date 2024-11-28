@@ -35,6 +35,7 @@ class Detection:
         self.statsd = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.statsdHost = config['statsdHost']
         self.model = model = YOLO( config['model'] )
+        self.skippedTags = config['skippedTags'] if 'skippedTags' in config else []
     
     def NextRow(self, db):
         dbCursor = db.cursor(dictionary=True)
@@ -158,7 +159,7 @@ class Detection:
                 confidence = int(box.conf[0] * 100)
                 className = classNames[ classId ]
 
-                if className == 'bench':
+                if className in self.skippedTags:
                     continue
                 if confidence < 30:
                     continue
