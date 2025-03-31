@@ -186,6 +186,8 @@ void *http_server(void *v) {
                         log_error("No space for connection. Closing", __func__);
                         close(socketfd);
                     }
+                } else {
+                    log_info("Got unexpected revents value on listening socket: %d", http_fds[i].revents);
                 }
 
                 // move on to next item in fds
@@ -199,7 +201,7 @@ void *http_server(void *v) {
                 //i++;
                 //continue;
                 // fall through to close
-                fprintf(stdout, "[INFO] Got HUP or ERR, closing: %d\n", i);
+                log_info("[INFO] Got HUP or ERR, closing: %d\n", http_fds[i].fd);
 
             // data to read
             } else if (http_fds[i].revents & POLLIN) {
@@ -222,6 +224,8 @@ void *http_server(void *v) {
                     //fprintf(stdout, "[INFO] Read returned 0: %d\n", i);
                     // fall through to close
                 }
+            } else {
+                log_info("Got other revents value on req socket: %d", http_fds[i].revents);
             }
 
 
@@ -242,8 +246,12 @@ void *http_server(void *v) {
             }
             pthread_mutex_unlock(&motion_connections_mutex);
 
-            close(http_fds[i].fd);
+            ret = close(http_fds[i].fd);
+            if (ret != 0) {
+                log_info("close on socket %d returned: %d", http_fds[i].fd, ret);
+            }
 
+            // move last place into the slot that was just removed
             http_fds[i] = http_fds[http_fds_count - 1];
             http_fds_count--;
             // process the same slot again, which has a new file descriptor
@@ -369,5 +377,6 @@ int handle_request(char* request, int poll_fd, SETTINGS* settings) {
         response1_length = snprintf(response1, 1024, "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: 9\r\nConnection: close\r\n\r\nNot found");
         ret = socket_send(poll_fd, response1, response1_length);
     }
+    log_info("handle_request returned %d bytes on %d\n", ret, poll_fd);
     return ret;
 }
