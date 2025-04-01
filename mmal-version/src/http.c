@@ -141,7 +141,7 @@ void *http_server(void *v) {
 
     // add listener to poll fds
     http_fds[0].fd = listener;
-    http_fds[0].events = POLLIN;
+    http_fds[0].events = POLLIN | POLLERR | POLLNVAL;
     http_fds_count++;
 
     pthread_mutex_lock(&running_mutex);
@@ -149,11 +149,12 @@ void *http_server(void *v) {
     pthread_mutex_unlock(&running_mutex);
     while (r) {
         // this blocks, which is what we want
+        log_info("Num streaming FDs: %d\n", http_fds_count);
         ret = poll(http_fds, http_fds_count, -1);
         if (ret < 1) {
             // thread cancelled or other?
             // TODO: handle this
-            printf("poll returned <1 %d\n", ret);
+            printf("poll returned <-1. errno: %d\n", errno);
             continue;
         }
 
@@ -179,8 +180,10 @@ void *http_server(void *v) {
                     if (http_fds_count < MAX_POLL_FDS) {
                         log_info("Accepted: %d", socketfd);
 
+                        // IS THIS FD ALREADY IN OUR LIST?
+
                         http_fds[http_fds_count].fd = socketfd;
-                        http_fds[http_fds_count].events = POLLIN | POLLHUP | POLLERR;
+                        http_fds[http_fds_count].events = POLLIN;
                         http_fds_count++;
                     } else {
                         log_error("No space for connection. Closing", __func__);
@@ -196,15 +199,7 @@ void *http_server(void *v) {
             } // end handle new connections
 
 
-            // closed or error
-            if (http_fds[i].revents & (POLLHUP | POLLERR)) {
-                //i++;
-                //continue;
-                // fall through to close
-                log_info("[INFO] Got HUP or ERR, closing: %d\n", http_fds[i].fd);
-
-            // data to read
-            } else if (http_fds[i].revents & POLLIN) {
+            if (http_fds[i].revents & (POLLIN | POLLHUP)) {
                 // TODO: we may not receive all the data at once, hmmm
                 int bytes = recv(http_fds[i].fd, request, REQUEST_MAX_LENGTH, 0);
                 if (bytes > 0) {
@@ -223,6 +218,7 @@ void *http_server(void *v) {
                     // read returned 0 bytes
                     //fprintf(stdout, "[INFO] Read returned 0: %d\n", i);
                     // fall through to close
+                    log_info("Socket %d returned 0 bytes", http_fds[i].fd);
                 }
             } else {
                 log_info("Got other revents value on req socket: %d", http_fds[i].revents);
