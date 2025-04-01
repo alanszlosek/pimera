@@ -75,6 +75,11 @@ for filepath in iterateOverFiles(basePath):
         fps = v.get(cv2.CAP_PROP_FPS)
         frame_count = int(v.get(cv2.CAP_PROP_FRAME_COUNT))
         v.release()
+
+        if fps == 0:
+            # What?!
+            print("OpenCV can't find FPS ... what? Skipping ...\n")
+            continue
         duration_milliseconds = int( (frame_count/fps) * 1000)
         # Geez if I'm doing the above, why not grab the thumbnail, too?
 
