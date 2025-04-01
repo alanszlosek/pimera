@@ -18,7 +18,7 @@ pthread_mutex_t motion_detection_mutex;
 
 // local variables to reduce need to dereference into settings struct
 unsigned int settings_buffer_length;
-unsigned int settings_fps;
+unsigned int detection_fps_step = 10;
 MMAL_QUEUE_T *yuv_queue;
 
 // we take abs of pixels between previous_frame and current_frame
@@ -215,8 +215,10 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             // we exceeded the threshold, don't need to process any more batches
             process = false;
 
-            // if motion is detected, check again in 1 second
-            detect_at = yuv_frame_counter - 1 + settings_fps;
+            // if motion is detected, check again in 2 seconds
+            // this ensures videos are long enough to be useful, and prevents churn
+            // (ie. many short videos are hard to consume, so fewer slightly longer vids are better)
+            detect_at = yuv_frame_counter - 1 + detection_fps_step;
 
             h264_motion_detected();
             pthread_mutex_lock(&motion_detection_mutex);
@@ -243,7 +245,7 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
 
 // TODO: accept settings and handles and extract local copies
 void detection_config(unsigned int fps, unsigned int y_length, MMAL_QUEUE_T* queue) {
-    settings_fps = fps;
+    detection_fps_step = fps * 2;
     settings_buffer_length = y_length;
     // TODO: realloc current_frame and previous_frame buffers here
     yuv_queue = queue;
