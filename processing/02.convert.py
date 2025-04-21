@@ -53,5 +53,6 @@ if __name__ == '__main__':
     with multiprocessing.Pool(processes=5) as p:
         results = p.map(func=task2, iterable=files, chunksize=1)
         print(results)
+    print("Done")
 
 
