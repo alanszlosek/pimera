@@ -78,7 +78,8 @@ for filepath in iterateOverFiles(basePath):
 
         if fps == 0:
             # What?!
-            print("OpenCV can't find FPS ... what? Skipping ...\n")
+            print(f"OpenCV can't find FPS. Removing broken file: {filepath}\n") 
+            os.remove(filepath)
             continue
         duration_milliseconds = int( (frame_count/fps) * 1000)
         # Geez if I'm doing the above, why not grab the thumbnail, too?
