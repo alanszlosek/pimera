@@ -98,6 +98,7 @@ void h264_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
 
                 // Put current buffer into new queue
                 h264_advance_buffer();
+                h264_buffer->pts = buffer->pts;
                 mmal_buffer_header_mem_lock(buffer);
                 memcpy(h264_buffer->buffer + h264_buffer->length, buffer->data, buffer->length);
                 h264_buffer->length += buffer->length;
@@ -128,7 +129,7 @@ void h264_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             if (buffer->pts != MMAL_TIME_UNKNOWN) {
 
                 // Go to next circular buffer slot
-                h264_buffer = h264_next_buffer();
+                h264_advance_buffer();
                 h264_buffer->pts = buffer->pts;
             }
         }
@@ -137,7 +138,7 @@ void h264_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         // Do we need to open new file?
         //if (h264_motion) {
         // motion detected, we have a frame to record until
-        if (buffer->pts < save_until) {
+        if (buffer->pts != MMAL_TIME_UNKNOWN && buffer->pts < save_until) {
             // open file
             struct timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
@@ -160,8 +161,7 @@ void h264_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             write(video_fd, h264_file_kickoff, h264_file_kickoff_length);
 
             // How do we know which circular buffer to start flushing to disk? 
-            write(video_fd, h264_buffer, h264_buffer_length);
-            h264_buffer_length = 0;
+            write(video_fd, h264_buffer->buffer, h264_buffer->length);
 
             mmal_buffer_header_mem_lock(buffer);
             write(video_fd, buffer->data, buffer->length);
@@ -175,7 +175,7 @@ void h264_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
                 // keyframe might have invalid pts if frame data is split across more than 1 buffer
                 // but first keyframe of data will have pts
                 if (buffer->pts != MMAL_TIME_UNKNOWN) {
-                    h264_next_buffer();
+                    h264_advance_buffer();
                     h264_buffer->pts = buffer->pts;
                 }
             }
@@ -214,7 +214,7 @@ void h264_config(unsigned int fps, MMAL_QUEUE_T *queue, char* path, size_t h264_
 
 void h264_motion_detected(int64_t pts) {
     // we check for motion in 1 second, so stop recording after 2
-    save_until = pts + (1000000 * 2);
+    save_until = pts + 2000000;
     //printf("h264_frame_counter: %d. Setting save_until: %d\n", h264_frame_counter, save_until);
 
     // would like to set frame/recording cutoffs here instead

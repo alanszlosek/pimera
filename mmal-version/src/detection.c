@@ -195,6 +195,14 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
 
         end = clock();
 
+        // Detection stopped at NULL separators, advance past them to prepare for next time
+        ptr += 3;
+        // If we've reached the end of our pointer data, there's nothing more to do
+        if (ptr == NULL) {
+            printf("Done with batches\n");
+            process = false;
+        }
+
         //printf("DETECTION. Pixel delta: %d threshold: %d Time: %f FPS: %d cnt: %d\n", threshold_tally, yuv_threshold, (double)(end - begin) / CLOCKS_PER_SEC, fps_rate, count);
 
         if (threshold_tally > yuv_threshold) {
@@ -224,15 +232,6 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             // next detection is already scheduled so no need to update detect_at here
             pthread_mutex_unlock(&motion_detection_mutex);
         }
-
-        // Detection stopped at NULL separators, advance past them to prepare for next time
-        ptr += 3;
-        if (ptr == NULL) {
-            // If we've reached the end of our pointer data, there's nothing more to do
-            printf("Done with batches\n");
-            process = false;
-        }
-
     }
 
     mmal_buffer_header_release(buffer);
