@@ -18,7 +18,7 @@ pthread_mutex_t motion_detection_mutex;
 
 // local variables to reduce need to dereference into settings struct
 unsigned int settings_buffer_length;
-unsigned int detection_fps_step = 10;
+int64_t detection_fps_step = 1000000;
 MMAL_QUEUE_T *yuv_queue;
 
 // we take abs of pixels between previous_frame and current_frame
@@ -34,8 +34,8 @@ unsigned int yuv_threshold = 900000;
 
 
 bool process = false;
-unsigned int yuv_frame_counter = 0;
-unsigned int detect_at = 1; // next frame number to test for motion
+int64_t detect_at = 1; // next frame number to test for motion
+int64_t detecting_at = 0;
 
 // globals to help iterate over pixel rows
 uint8_t** ptr; // pointer to motion_detection.processing.pointers
@@ -47,8 +47,7 @@ unsigned int fps = 0; // count frames per second to track hiccups
 unsigned int fps_rate = 0;
 
 
-inline unsigned int detection() {
-    unsigned int count = 0;
+inline void detection() {
     for (; *ptr != NULL; ptr += 3) {
         uint8_t* c = *ptr;
         uint8_t* c_end = *(ptr + 1);
@@ -60,16 +59,12 @@ inline unsigned int detection() {
                 threshold_tally++;
             }
         }
-        count++;
     }
-    return count;
 }
 
 #ifdef PI_ZERO
 // SIMD for PI Zero W saves roughly a millisecond
-inline unsigned int detection_armv6() {
-    unsigned int count = 0;
-
+inline void detection_armv6() {
     uint8x4_t simd1;
     uint8x4_t simd2;
     uint8x4_t higher;
@@ -107,15 +102,12 @@ inline unsigned int detection_armv6() {
                 threshold_tally++;
             }
         }
-        count++;
     }
-    return count;
 }
 #endif
 
 #ifdef PI_THREE
-inline unsigned int detection_neon() {
-    unsigned int count = 0;
+inline void detection_neon() {
     uint8x16_t a, b, absdiff;
     for (; *ptr != NULL; ptr += 3) {
         uint8_t* c = *ptr;
@@ -135,9 +127,7 @@ inline unsigned int detection_neon() {
                 }
             }
         }
-        count++;
     }
-    return count;
 }
 #endif
 
@@ -145,7 +135,6 @@ inline unsigned int detection_neon() {
 
 void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     time_t current_time = time(NULL);
-    yuv_frame_counter++;
     fps++;
 
     if (current_time - previous_time > 0) {
@@ -153,6 +142,9 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         fps = 0;
         previous_time = current_time;
     }
+
+    // TODO: log pts with detection buffer so we can have h264 side
+    // compare when saving to disk
 
     // TODO: refactor this without locking
     // perhaps increment local counter and compare buffer timestamp
@@ -163,7 +155,7 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     */
 
     clock_t begin, end;
-    if (yuv_frame_counter == detect_at) {
+    if (buffer->pts >= detect_at) {
         // Perform motion detection
         begin = clock();
 
@@ -176,7 +168,9 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
         process = true;
 
         // schedule next detection
-        detect_at = yuv_frame_counter + motion_detection.detection_sleep;
+        //detect_at = yuv_frame_counter + motion_detection.detection_sleep;
+        detecting_at = buffer->pts;
+        detect_at = buffer->pts + motion_detection.detection_sleep;
 
         // reset pointers
         rows_processed = 0;
@@ -188,24 +182,16 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
     
     if (process) {
         begin = clock();
-        unsigned int count = 0;
 
         #ifdef PI_THREE
-        count = detection_neon();
+        detection_neon();
         #else
         #ifdef PI_ZERO
-        count = detection_armv6();
+        detection_armv6();
         #else
-        count = detection();
+        detection();
         #endif
         #endif
-
-        // advance past NULL separators
-        ptr += 3;
-        if (ptr == NULL) {
-            // Done
-            printf("Done with batches\n");
-        }
 
         end = clock();
 
@@ -218,9 +204,10 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
             // if motion is detected, check again in 2 seconds
             // this ensures videos are long enough to be useful, and prevents churn
             // (ie. many short videos are hard to consume, so fewer slightly longer vids are better)
-            detect_at = yuv_frame_counter - 1 + detection_fps_step;
+            //detect_at = yuv_frame_counter + detection_fps_step;
+            detect_at = buffer->pts + detection_fps_step;
 
-            h264_motion_detected();
+            h264_motion_detected(detecting_at);
             pthread_mutex_lock(&motion_detection_mutex);
             motion_detection.motion_count++;
             motion_detection.pixel_delta = threshold_tally;
@@ -231,10 +218,19 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
 
         } else {
             pthread_mutex_lock(&motion_detection_mutex);
+            // Note: is resetting this here causing video churn?
             motion_detection.motion_count = 0;
             motion_detection.pixel_delta = threshold_tally;
             // next detection is already scheduled so no need to update detect_at here
             pthread_mutex_unlock(&motion_detection_mutex);
+        }
+
+        // Detection stopped at NULL separators, advance past them to prepare for next time
+        ptr += 3;
+        if (ptr == NULL) {
+            // If we've reached the end of our pointer data, there's nothing more to do
+            printf("Done with batches\n");
+            process = false;
         }
 
     }
@@ -245,7 +241,10 @@ void yuv_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer) {
 
 // TODO: accept settings and handles and extract local copies
 void detection_config(unsigned int fps, unsigned int y_length, MMAL_QUEUE_T* queue) {
-    detection_fps_step = fps * 2;
+    // trying to prevent detection during period when we're saving a video that's
+    // at least 2 seconds long anyway, but this might be hurting us given that we
+    // spread processing out over 1/3 of a second
+    detection_fps_step = 1000000;
     settings_buffer_length = y_length;
     // TODO: realloc current_frame and previous_frame buffers here
     yuv_queue = queue;

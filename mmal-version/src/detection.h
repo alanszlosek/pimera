@@ -13,13 +13,14 @@
 // TODO: just need fps and y_length locally
 
 typedef struct {
-    int detection_sleep;
+    int64_t detection_sleep;
     int stream_sleep;
     uint8_t *previous_frame;
 
     // holds yuv data so we can spread detection across multiple yuvCallback() calls
     uint8_t* current_frame;
     unsigned int changed_pixels_threshold;
+    // This is only used for stats reporting in the API endpoint
     unsigned int pixel_delta;
     /*
     struct {

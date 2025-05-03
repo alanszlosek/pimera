@@ -129,6 +129,7 @@ void region_reconfigure(SETTINGS* settings) {
             motion_detection.processing.pointers[i++] = NULL;
         }
     }
+    // One final row to signal end of pointer data
     motion_detection.processing.pointers[i++] = NULL;
     motion_detection.processing.pointers[i++] = NULL;
     motion_detection.processing.pointers[i++] = NULL;
@@ -145,9 +146,10 @@ void region_reconfigure(SETTINGS* settings) {
     */
 }
 void detection_init(SETTINGS* settings) {
-    motion_detection.detection_sleep = settings->h264.fps / settings->motion_check_frequency;
+    // Frames have pts timestamp in microseconds, so calculate sleep based on pts
+    motion_detection.detection_sleep = 1000000 / settings->motion_check_frequency;
 
-    motion_detection.processing.batches = motion_detection.detection_sleep;
+    motion_detection.processing.batches = settings->h264.fps / settings->motion_check_frequency;
 
     motion_detection.stream_sleep = settings->h264.fps / settings->mjpeg.fps;
 
