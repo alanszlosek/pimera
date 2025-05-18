@@ -1,6 +1,4 @@
 import datetime
-import glob
-import hashlib
 import json
 import os
 import pathlib
@@ -21,13 +19,28 @@ c.execute('select path from videos where status=2')
 rows = c.fetchall()
 my.close()
 
+videosToPrune = set()
 for row in rows:
-    filepath = os.path.join(basePath, row[0][1:-4]) + '*'
-    print(f"Checking {filepath}")
-    for f in glob.glob(filepath):
-        print('Removing %s' % (f,))
-        try:
-            os.remove(f)
-        except Exception as e:
-            a = True
+    withoutExtension = row[0][1:-4]
+    videosToPrune.add(withoutExtension)
+
+for root, dirs, files in os.walk(basePath):
+    if len(files) > 0:
+        # root will be something like "/mnt/camvids/20250515"
+        # relativeRoot should end up with something like "20250515/20250515010101_raspi3_100x100x20_tagName.jpg"
+        relativeRoot = root.removeprefix(basePath).strip("/\\")
+        for file in files:
+            # Strip off tag and extension portion of filename
+            # This should result in something like "20250515/20250515010101_raspi3_100x100x20"
+            withoutTagOrExtension = "_".join(file[:-4].split("_")[0:3])
+
+            relativePathWithoutExtension = os.path.join(relativeRoot, withoutTagOrExtension)
+            if file.startswith(relativeRoot) and relativePathWithoutExtension in videosToPrune:
+                filepath = os.path.join(root, file)
+                print(f"Removing: {file}\n")
+                try:
+                    os.remove(filepath)
+                except:
+                    a=True
+
 
