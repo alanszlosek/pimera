@@ -60,14 +60,14 @@ For now, I'm focused on making it performant on the Pi Zero W because it's small
 
 ## Supported Hardware
 
-I'm developing and testing with:
+I actively use Pimera with the following:
 
-* Raspberry Pi Zero 2W and a 3B+
+* Raspberry Pi Zero 2W, 3B, 4
 * Pi Camera module v2
-* 32bit PiOS
-* GCC, because Clang doesn't ARM Neon SIMD intrinsics
+* 32bit Legacy PiOS (this is the only OS that contains the hardware accelerated MMAL stack)
+* GCC, because Clang doesn't support ARM Neon SIMD intrinsics
 
-The Pi Zero (first generation) is simply unstable, even at a low framerate of 10fps. It becomes unresponsive after a couple, so I've given up on it.
+Note: I had been testing with the Pi Zero (first generation) for years, but it's simply too unstable, even at a low framerate of 10fps. It becomes unresponsive after a couple, so I've given up on it. It's possible that the single-core is to blame, or the lower overall IO thorughput.
 
 # Installation
 
@@ -88,9 +88,9 @@ Note the IP address of your Pi when it connects to your network.
 
 * Change to `mmal-version/src/`
 * Run the appropriate make target for your RaspberryPi board
-  * `make zero` for the Pi Zero W
+  * `make zero` for the Pi Zero 2W
   * `make three` for the Pi 3B+
-  * `make four` for the Pi 4
+  * `make four` for the Pi 4 (I think this is currently broken, actually ... doesn't do SIMD)
 
 ## Running
 
