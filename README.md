@@ -4,7 +4,7 @@ PiMera hopes to be an end-to-end security/critter camera application, with a web
 
 The camera application (`mmal-version` folder) runs on Raspberry Pi computers that use the Rasperry Pi camera modules. It saves H264 video whenever motion is detected within the camera frame. I'm striving for 1640x1232 at 30fps on the following models: 3B, 3B+, 4, Pi Zero 2W. 
 
-The processing scripts and video browsing UI use Python, MySQL, and JavaScript. These run on a dedicated server.
+The processing scripts and video browsing UI use Python, MySQL, and JavaScript. These run on a dedicated server, preferably with a CUDA-capable GPU for faster object-detection. A scheduled job runs on the server to fetch videos from each RasPi, convert them to mp4, index them into a database, then run pytorch/ultralytics object detection to tag them in the database. See the `processing` folder for the scripts.
 
 ## Repository layout
 
@@ -35,8 +35,6 @@ PiMera is currently configured for 1640x1232, and yes that's an odd resolution. 
 # Current Status
 
 Very much a work in progress. The code needs many types of cleanup, but it should work for you.
-
-For now, I'm focused on making it performant on the Pi Zero W because it's small size and low power requirements make it the perfect critter cam.
 
 ## Working Features
 
