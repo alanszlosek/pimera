@@ -890,7 +890,13 @@ var recordings = {
                                     'div',
                                     {class:"meta"},
                                     [
-                                        tag('div', {}, [dt]),
+                                        tag('div', {}, [
+                                            tag(
+                                                'a',
+                                                {href:'/movies' + video.path},
+                                                [dt]
+                                            )
+                                        ]),
                                         tag('div', {class: 'duration'}, [fps + ' fps | ' + prettyMilliseconds(video.durationMilliseconds)])
                                     ]
                                 ),

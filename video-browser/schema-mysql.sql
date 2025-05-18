@@ -22,8 +22,8 @@ CREATE TABLE videos (
     durationMilliseconds int(10) unsigned not null default 0
 );
 CREATE INDEX video_path on videos (path);
-CREATE INDEX video_status on videos (status);
 CREATE INDEX video_objectDetectionRan on videos (objectDetectionRan);
+CREATE INDEX video_statusObjectDetectionRan on videos (status, objectDetectionRan);
 
 
 CREATE TABLE video_tag (
