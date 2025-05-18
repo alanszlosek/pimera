@@ -2,7 +2,7 @@
 
 PiMera hopes to be an end-to-end security/critter camera application, with a web UI for browsing recordings.
 
-The camera application (`mmal-version` folder) runs on Raspberry Pi computers that use the Rasperry Pi camera modules. It saves H264 video whenever motion is detected within the camera frame. I'm striving for 1640x1232 at 30fps (see note at end of this section), even on a Pi Zero W.
+The camera application (`mmal-version` folder) runs on Raspberry Pi computers that use the Rasperry Pi camera modules. It saves H264 video whenever motion is detected within the camera frame. I'm striving for 1640x1232 at 30fps on the following models: 3B, 3B+, 4, Pi Zero 2W. 
 
 The processing scripts and video browsing UI use Python, MySQL, and JavaScript. These run on a dedicated server.
 
@@ -10,7 +10,7 @@ The processing scripts and video browsing UI use Python, MySQL, and JavaScript. 
 
 * `mmal-version/` - This is the C code for the camera application that records when motion is detected.
 * `processing/` - Scripts to copy h264 videos from camera nodes, catalog them in a database, run motion detection on them and save detected classes as tags in the database. Requirements: ffmpeg, python3
-* `processing/hosts.txt` - IP addresses of the RasPis to copy videos from.
+* `processing/hosts.txt` - username and IP addresses of the RasPis to copy videos from (for ssh).
 * `video-browser/` - The web UI for browsing videos by tag (detected objects) and date. **See screenshot below.** Browsing by tag works, and quick-and-dirty stream browsing does too, but I have a redesign planned to improve UX.
 * `config.json` - Config file that contains MySQL connection info used by `processing/` and `video-browser/` Python code.
 * `cpu-metrics` - Daemon to collect RasPi CPU temperature and usage, and send to StatsD or InfluxDB.
@@ -40,17 +40,17 @@ For now, I'm focused on making it performant on the Pi Zero W because it's small
 
 ## Working Features
 
-* 1640x1232 at 10fps on Zero W
+* 1640x1232 at 20fps on Zero 2W
 * Receives 3 frame encodings from the camera at 20fps
   * H264 - saved to disk when motion is detected
   * YUV420 - used for motion detection
   * MJPEG - for streaming/live-viewing to a web browser
 * Motion detection 3x per second
-* MJPEG streaming to browser at 2fps (planning more optimizations here)
-* CPU utilization of Pi Zero W stays under 15% even when streaming to browser
-* Frame annotated with timestamp and hostname
+* MJPEG streaming to browser at 3fps (planning more optimizations here)
+* CPU utilization of Pi Zero 2W stays under 15% even when streaming to browser
+* Frames are annotated with timestamp and hostname
 * Configurable via INI file (resolution, fps, video save path, etc)
-* User specifies a rectangular region of the frame to check for motion in the INI
+* User can control where in the frame to look for motion via the INI file
 
 ## Features in Progress
 
@@ -62,18 +62,20 @@ For now, I'm focused on making it performant on the Pi Zero W because it's small
 
 I'm developing and testing with:
 
-* Raspberry Pi Zero W and a 3B+
+* Raspberry Pi Zero 2W and a 3B+
 * Pi Camera module v2
 * 32bit PiOS
 * GCC, because Clang doesn't ARM Neon SIMD intrinsics
+
+The Pi Zero (first generation) is simply unstable, even at a low framerate of 10fps. It becomes unresponsive after a couple, so I've given up on it.
 
 # Installation
 
 ## Prerequisites
 
-* Raspberry Pi Zero W, 3B+, or 4
+* Raspberry Pi Zero 2W, 3B+, or 4
 * Pi Camera module
-* 32bit Raspberry Pi OS Lite. No desktop needed, since want to preserve all CPU and RAM for pimera to keep things performant
+* 32bit Legacy Raspberry Pi OS Lite. No desktop needed, since want to preserve all CPU and RAM for pimera to keep things performant
 * apt install gcc
 
 ## Setup
