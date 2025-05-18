@@ -1,2 +1,3 @@
-5 0 * * * /home/pimera/pimera/processing/scripts.sh >> /home/pimera/cron.log 2>&1
+# Run every hour, but use flock to avoid collisions
+5 * * * * flock -n /home/pimera/pimera.lock /home/pimera/pimera/processing/scripts.sh >> /home/pimera/cron.log 2>&1
 
