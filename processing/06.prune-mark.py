@@ -43,7 +43,7 @@ cameraTags = ["camera:raspi4", "camera:raspi3", "camera:raspi3b", "camera:raspi0
 cameraTagIds = getTagIds(cameraTags)
 
 # if only a combination of these (plus camera specifier)
-anyTags = ["car", "truck", "boat", "sheep", "bench", "potted plant", "cow", "bear", "umbrella"]
+anyTags = ["car", "truck", "boat", "sheep", "bench", "potted plant", "cow", "bear", "umbrella", "frisbee", "teddy bear", "fire hydrant", "parking meter"]
 # map tag names to ids
 anyTagIds = getTagIds(anyTags)
 
@@ -70,7 +70,6 @@ for mustHaveTagId, anyTagIds in mustToAny.items():
     clauses2 = ' AND '.join(clauses)
 
     sql = f"SELECT id FROM videos WHERE status<>2 and objectDetectionRan=1 AND {clauses2}"
-    sql = f"SELECT id FROM videos WHERE status<>2 AND {clauses2}"
     print(sql)
     c = my.cursor()
     c.execute(sql)
