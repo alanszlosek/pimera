@@ -1,5 +1,5 @@
 {
-    "host": "192.168.1.173",
+    "host": "192.168.10.185",
     "database": "pimera",
     "username": "pimera",
     "password": "pimera",
@@ -7,7 +7,7 @@
     "model": "/home/pimera/yolov8x.pt",
     "videoPath": "/mnt/media/surveillance",
     "apiHost": "http://192.168.10.183:8000",
-    "skippedTags": ["bear", "bench", "dining table", "elephant"],
+    "skippedTags": ["bear", "bench", "dining table", "elephant", "frisbee", "teddy bear", "fire hydrant", "parking meter"],
 
     "statsdHost": "192.168.10.1"
 }
