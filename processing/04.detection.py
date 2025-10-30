@@ -140,7 +140,7 @@ class Detection:
 
     def Process(self, filename, frame_stride):
         # TODO: handle open failures
-        results = self.model(filename, vid_stride=frame_stride)
+        results = self.model(filename, vid_stride=frame_stride, stream=True)
 
         out = {}
         for i,result in enumerate(results):
