@@ -1,18 +1,17 @@
-# THIS DOESN'T WORK YET
-
 [Unit]
 Description=Pimera Videos
 After=network.target
 
 [Service]
-User=pi
-Group=pi
-WorkingDirectory=/home/pimera/pimera
+User=pimera
+Group=pimera
+WorkingDirectory=/home/pimera/pimera/video-browser
 SyslogIdentifier=pimera-videos
 ExecStart=/home/pimera/pimera/video-browser/run.sh
 Restart=always
 StandardOutput=file:/var/log/pimera-videos.log
 StandardError=file:/var/log/pimera-videos.log
+RuntimeMaxSec=1d
 
 [Install]
 WantedBy=multi-user.target
