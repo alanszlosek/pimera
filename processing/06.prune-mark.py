@@ -43,7 +43,7 @@ cameraTags = ["camera:raspi4", "camera:raspi3", "camera:raspi3b", "camera:raspi0
 cameraTagIds = getTagIds(cameraTags)
 
 # if only a combination of these (plus camera specifier)
-anyTags = ["car", "truck", "boat", "sheep", "bench", "potted plant", "cow", "bear", "umbrella", "frisbee", "teddy bear", "fire hydrant", "parking meter"]
+anyTags = ["car", "truck", "boat", "sheep", "bench", "potted plant", "cow", "bear", "umbrella", "frisbee", "teddy bear", "fire hydrant", "parking meter", "bus"]
 # map tag names to ids
 anyTagIds = getTagIds(anyTags)
 
@@ -93,9 +93,9 @@ if True:
     sql = f"""SELECT id FROM videos WHERE
     status<>2 and objectDetectionRan=1
     AND
-    id in (SELECT videoId FROM video_tag WHERE confidence > 0 and confidence < 70)
+    id in (SELECT videoId FROM video_tag WHERE confidence > 0 and confidence < 75)
     AND
-    id NOT IN (SELECT videoId FROM video_tag WHERE confidence >= 70 and tagId NOT IN ({temp}))"""
+    id NOT IN (SELECT videoId FROM video_tag WHERE confidence >= 75 and tagId NOT IN ({temp}))"""
     print(sql)
 
     c = my.cursor()
