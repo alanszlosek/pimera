@@ -19,7 +19,11 @@ fi
 
 VIDEO_PATH=$(cat ../config.json | jq -r .videoPath)
 ./01.copy.sh "${VIDEO_PATH}" || exit 1
-python3 -u ./02.convert.py "${VIDEO_PATH}" || exit 1
+
+# Create script of commands to convert from h264 to mp4, then run it
+python3 -u ./02.convertscript.py "${VIDEO_PATH}" || exit 1
+bash ./generated.convert.sh
+
 python3 -u ./02.organize.py "${VIDEO_PATH}" || exit 1
 python3 -u ./03.index.py || exit 1
 python3 -u ./04.detection.py || exit 1
